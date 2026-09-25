@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../firebase/config'
-import { onAuthStateChanged, signOut } from 'firebase/auth'
-import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore'
+import { auth, db } from '../../supabase/client'
 
 const s = { navy: '#001F3F', turquoise: '#40E0D0' }
 
