@@ -1,7 +1,6 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { auth } from '../../firebase/config'
-import { signOut } from 'firebase/auth'
+import { supabase } from '../../supabase/client'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -9,7 +8,7 @@ export default function PendingVerification() {
   const navigate = useNavigate()
 
   const handleLogout = async () => {
-    await signOut(auth)
+    await supabase.auth.signOut()
     localStorage.removeItem('montemy_role')
     navigate('/')
   }
