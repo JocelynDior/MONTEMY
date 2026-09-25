@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { db } from '../../firebase/config'
-import { collection, getDocs, addDoc, query, where, orderBy, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore'
+import { db } from '../../supabase/client'
 
 const ADMIN_USER_ID = 'montemy_admin_user_id'
 const ADMIN_NAME = 'Admin Support'
