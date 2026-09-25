@@ -1,8 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../firebase/config'
-import { signInWithEmailAndPassword } from 'firebase/auth'
-import { collection, getDocs } from 'firebase/firestore'
+import { auth, db } from '../../supabase/client'
 import { BACKGROUND_VIDEO } from '../../config/media'
 
 export default function AdminLogin() {
