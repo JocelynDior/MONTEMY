@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { db } from '../../firebase/config'
-import { collection, getDocs, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore'
+import { db } from '../../supabase/client'
 
 const s = { navy: '#001F3F', turquoise: '#40E0D0' }
 
