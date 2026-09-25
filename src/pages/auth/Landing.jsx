@@ -1,33 +1,46 @@
 import React, { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { auth } from '../../firebase/config'
-import { onAuthStateChanged } from 'firebase/auth'
+import { supabase } from '../../supabase/client'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, addRipple, C } from '../../styles/glass'
+
+const roleRoutes = {
+  student: '/student/dashboard',
+  teacher: '/teacher/dashboard',
+  parent: '/parent/dashboard',
+  principal: '/principal/dashboard',
+  tutor: '/tutor/dashboard',
+  schoolmember: '/schoolmember/dashboard',
+  admin: '/admin/dashboard',
+}
 
 export default function Landing() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Auto-login: redirect based on stored role
+    // Check for existing Supabase session on mount
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
         const role = localStorage.getItem('montemy_role')
-        if (role) {
-          const routes = {
-            student: '/student/dashboard',
-            teacher: '/teacher/dashboard',
-            parent: '/parent/dashboard',
-            principal: '/principal/dashboard',
-            tutor: '/tutor/dashboard',
-            schoolmember: '/schoolmember/dashboard',
-            admin: '/admin/dashboard',
-          }
-          navigate(routes[role] || '/student/dashboard')
+        if (role && roleRoutes[role]) {
+          navigate(roleRoutes[role])
+        }
+      }
+    }
+    checkSession()
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        const role = localStorage.getItem('montemy_role')
+        if (role && roleRoutes[role]) {
+          navigate(roleRoutes[role])
         }
       }
     })
-    return () => unsub()
+
+    return () => subscription.unsubscribe()
   }, [])
 
   return (
