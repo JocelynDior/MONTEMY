@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { auth, db } from '../../firebase/config'
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserLocalPersistence } from 'firebase/auth'
-import { doc, setDoc, collection, getDocs, serverTimestamp } from 'firebase/firestore'
+import { auth, db } from '../../supabase/client'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
 
