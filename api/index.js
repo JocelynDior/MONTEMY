@@ -8,16 +8,13 @@ const { GoogleGenerativeAI } = require('@google/generative-ai')
 const app = express()
 const PORT = process.env.PORT || 3001
 
-// Supabase admin client (service role — never expose this to frontend)
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
 
-// ─── Middleware ───────────────────────────────────────────────
 app.use(express.json())
 app.use(cors({
   origin: [
@@ -28,14 +25,12 @@ app.use(cors({
   credentials: true,
 }))
 
-// Rate limiter for AI route
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
   message: { error: 'Too many requests, slow down.' },
 })
 
-// ─── JWT Verification Middleware ──────────────────────────────
 async function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -50,26 +45,80 @@ async function verifyToken(req, res, next) {
   next()
 }
 
-// ─── Routes ───────────────────────────────────────────────────
-
-// Health check — keeps Render warm
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
-// Ping (alias for health)
 app.get('/ping', (req, res) => {
   res.json({ pong: true })
 })
 
-// Admin: verify a user (approve/reject)
 app.post('/api/admin/verify-user', verifyToken, async (req, res) => {
   const { userId, action } = req.body
-
   const { data: callerData } = await supabase
     .from('users')
     .select('role')
     .eq('id', req.user.id)
     .single()
+  if (!callerData || callerData.role !== 'admin') {
+    return res.status(403).json({ error: 'Admins only' })
+  }
+  if (action === 'approve') {
+    const { error } = await supabase
+      .from('users')
+      .update({ is_verified: true })
+      .eq('id', userId)
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json({ success: true, message: 'User approved' })
+  }
+  if (action === 'reject') {
+    await supabase.from('users').delete().eq('id', userId)
+    await supabase.auth.admin.deleteUser(userId)
+    return res.json({ success: true, message: 'User rejected and deleted' })
+  }
+  res.status(400).json({ error: 'Invalid action' })
+})
 
-  if (!callerData ||
+app.post('/api/admin/validate-key', (req, res) => {
+  const { adminKey } = req.body
+  if (adminKey === process.env.ADMIN_KEY) {
+    return res.json({ valid: true })
+  }
+  res.status(403).json({ valid: false, error: 'Invalid admin key' })
+})
+
+app.post('/api/ai-tutor', verifyToken, aiLimiter, async (req, res) => {
+  const { message, history, studentGrade, studentSubjects } = req.body
+  if (!message) {
+    return res.status(400).json({ error: 'Message is required' })
+  }
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+    const systemPrompt = `You are a helpful, friendly school tutor on the Montemy education platform. 
+You are helping a student in grade ${studentGrade || 'unknown'}.
+Their subjects are: ${studentSubjects?.join(', ') || 'general subjects'}.
+Keep explanations clear, encouraging, and age-appropriate.
+Never do homework for the student — guide them to the answer instead.`
+    const chat = model.startChat({
+      history: [
+        { role: 'user', parts: [{ text: systemPrompt }] },
+        { role: 'model', parts: [{ text: 'Understood! I am ready to help the student learn.' }] },
+        ...(history || []).map(msg => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }],
+        })),
+      ],
+    })
+    const result = await chat.sendMessage(message)
+    const response = await result.response
+    const text = response.text()
+    res.json({ reply: text })
+  } catch (err) {
+    console.error('Gemini error:', err)
+    res.status(500).json({ error: 'AI service error' })
+  }
+})
+
+app.listen(PORT, () => {
+  console.log(`Montemy API running on port ${PORT}`)
+})
