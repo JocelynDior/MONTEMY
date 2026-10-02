@@ -19,8 +19,6 @@ const ROLE_TABLES = {
   student: 'students', tutor: 'tutors', parent: 'parents',
   teacher: 'teachers', principal: 'principals', schoolmember: 'school_members',
 }
-// role tables that also store org_id
-const ROLES_WITH_ORG = ['tutor', 'principal', 'schoolmember']
 
 function friendlyError(err) {
   const m = (err?.message || '').toLowerCase()
@@ -63,6 +61,7 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [confirmEmail, setConfirmEmail] = useState('')
 
   const setField = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
@@ -129,31 +128,52 @@ export default function Register() {
         return
       }
 
-      const { data, error: signUpErr } = await supabase.auth.signUp({ email, password: form.password })
+      // Profile rows are created on the server by a database trigger,
+      // using the details passed here. Works with email confirmation on.
+      const { data, error: signUpErr } = await supabase.auth.signUp({
+        email,
+        password: form.password,
+        options: {
+          data: { name, role: type, org_id: form.org },
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
+      })
       if (signUpErr) throw signUpErr
-      if (!data.session) {
-        throw new Error('Email confirmation is switched on in Supabase. Turn it off while developing (Phase 30 turns it on for production).')
+
+      // Supabase hides duplicate emails by returning a user with no identities
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        throw new Error('An account with this email already exists. Try logging in instead.')
       }
 
-      const uid = data.user.id
-
-      const { error: userErr } = await supabase.from('users').insert({
-        id: uid, email, name, role: type, org_id: form.org, is_verified: false,
-      })
-      if (userErr) throw userErr
-
-      const roleRow = { user_id: uid }
-      if (ROLES_WITH_ORG.includes(type)) roleRow.org_id = form.org
-      const { error: roleErr } = await supabase.from(ROLE_TABLES[type]).insert(roleRow)
-      if (roleErr) throw roleErr
-
       localStorage.setItem('montemy_role', type)
-      navigate('/pending-verification')
+      setConfirmEmail(email)
     } catch (err) {
       console.error(err)
       setError(friendlyError(err))
     }
     setLoading(false)
+  }
+
+  if (confirmEmail) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+        <Background />
+        <div style={{ ...glassCard, padding: '3rem 2.5rem', maxWidth: '440px', width: '90%', textAlign: 'center' }} className="glass">
+          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📧</div>
+          <h2 style={{ color: C.turquoise, fontSize: '1.6rem', marginBottom: '1rem' }}>Check your email</h2>
+          <p style={{ color: 'rgba(255,255,255,0.75)', lineHeight: '1.7', marginBottom: '0.75rem' }}>
+            We sent a confirmation link to <strong style={{ color: C.turquoise }}>{confirmEmail}</strong>.
+            Click it to confirm your email, then log in.
+          </p>
+          <p style={{ color: 'rgba(255,255,255,0.5)', lineHeight: '1.7', marginBottom: '2rem', fontSize: '0.9rem' }}>
+            After you log in, your dashboard unlocks once an admin verifies your account. Check your spam folder if you don't see the email.
+          </p>
+          <button onClick={() => navigate('/login')} style={{ ...glassBtn }} className="ripple-container">
+            Go to Login
+          </button>
+        </div>
+      </div>
+    )
   }
 
   const passwordField = (
