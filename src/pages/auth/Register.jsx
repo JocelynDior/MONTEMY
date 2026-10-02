@@ -1,32 +1,61 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { auth, db } from '../../supabase/client'
+import { supabase } from '../../supabase/client'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
 
-const ADMIN_KEY = 'montemy'
-const ADMIN_EMAIL = 'Montemyadmin@gmail.com'
+const API_URL = import.meta.env.VITE_API_URL
 
 const labels = {
-  student: 'Student',
-  tutor: 'Tutor',
-  parent: 'Parent',
-  teacher: 'Teacher',
-  principal: 'Principal',
-  schoolmember: 'School Member',
+  student: 'Student', tutor: 'Tutor', parent: 'Parent',
+  teacher: 'Teacher', principal: 'Principal', schoolmember: 'School Member',
 }
-
 const icons = {
   student: '🎓', tutor: '📖', parent: '👨‍👩‍👧',
   teacher: '🏫', principal: '👔', schoolmember: '🏢',
+}
+// role -> role-specific table
+const ROLE_TABLES = {
+  student: 'students', tutor: 'tutors', parent: 'parents',
+  teacher: 'teachers', principal: 'principals', schoolmember: 'school_members',
+}
+// role tables that also store org_id
+const ROLES_WITH_ORG = ['tutor', 'principal', 'schoolmember']
+
+function friendlyError(err) {
+  const m = (err?.message || '').toLowerCase()
+  if (m.includes('already registered') || m.includes('already been registered'))
+    return 'An account with this email already exists. Try logging in instead.'
+  if (m.includes('password'))
+    return 'Password is too weak. Use at least 6 characters.'
+  if (m.includes('valid email') || m.includes('invalid email'))
+    return 'Please enter a valid email address.'
+  if (m.includes('rate limit') || m.includes('too many'))
+    return 'Too many attempts. Please wait a minute and try again.'
+  if (m.includes('failed to fetch'))
+    return 'Cannot reach the server. Check your connection and try again.'
+  return err?.message || 'Something went wrong. Please try again.'
+}
+
+const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
+
+function Background() {
+  return BACKGROUND_VIDEO ? (
+    <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
+      <source src={BACKGROUND_VIDEO} type="video/mp4" />
+    </video>
+  ) : (
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
+  )
 }
 
 export default function Register() {
   const { type } = useParams()
   const navigate = useNavigate()
   const isAdmin = type === 'admin'
+  const validRole = isAdmin || !!ROLE_TABLES[type]
 
-  const [form, setForm] = useState({ name: '', org: '', email: '', password: '', username: '', adminKey: '' })
+  const [form, setForm] = useState({ name: '', org: '', email: '', password: '', adminKey: '' })
   const [orgSearch, setOrgSearch] = useState('')
   const [orgs, setOrgs] = useState([])
   const [filteredOrgs, setFilteredOrgs] = useState([])
@@ -34,32 +63,31 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState(false)
+
+  const setField = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
   useEffect(() => {
-    loadOrgs()
-  }, [])
+    if (!isAdmin) loadOrgs()
+  }, [isAdmin])
 
   const loadOrgs = async () => {
-    try {
-      const [schoolsSnap, tutorOrgsSnap] = await Promise.all([
-        getDocs(collection(db, 'schools')),
-        getDocs(collection(db, 'tutorOrganizations')),
-      ])
-      const all = [
-        ...schoolsSnap.docs.map(d => ({ id: d.id, name: d.data().name || d.id, type: 'school' })),
-        ...tutorOrgsSnap.docs.map(d => ({ id: d.id, name: d.data().name || d.id, type: 'tutorOrg' })),
-      ]
-      setOrgs(all)
-    } catch (e) { console.error(e) }
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('id, name, type')
+      .order('name')
+    if (error) {
+      console.error(error)
+      setError('Could not load schools and organisations. Please refresh the page.')
+      return
+    }
+    setOrgs(data || [])
   }
 
   const handleOrgSearch = (val) => {
     setOrgSearch(val)
     setForm(f => ({ ...f, org: '' }))
     if (!val) { setFilteredOrgs([]); setShowOrgDropdown(false); return }
-    const filtered = orgs.filter(o => o.name.toLowerCase().includes(val.toLowerCase()))
-    setFilteredOrgs(filtered)
+    setFilteredOrgs(orgs.filter(o => o.name.toLowerCase().includes(val.toLowerCase())))
     setShowOrgDropdown(true)
   }
 
@@ -72,78 +100,80 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-    setLoading(true)
 
+    const email = form.email.trim().toLowerCase()
+    const name = form.name.trim()
+
+    if (!isAdmin && !form.org) {
+      setError('Please select a school or tutor organisation from the list.')
+      return
+    }
+
+    setLoading(true)
     try {
       if (isAdmin) {
-        if (form.adminKey !== ADMIN_KEY) { setError('Invalid admin key.'); setLoading(false); return }
-        await setPersistence(auth, browserLocalPersistence)
-        await signInWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_KEY)
+        // Admin key is checked on the server — never in the browser
+        const res = await fetch(`${API_URL}/api/admin/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password: form.password, adminKey: form.adminKey }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error || 'Admin registration failed.')
+
+        const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: form.password })
+        if (signInErr) throw signInErr
+
         localStorage.setItem('montemy_role', 'admin')
         navigate('/admin/dashboard')
         return
       }
 
-      if (!form.org) { setError('Please select a school or tutor organisation.'); setLoading(false); return }
-
-      await setPersistence(auth, browserLocalPersistence)
-      const cred = await createUserWithEmailAndPassword(auth, form.email, form.password)
-      const uid = cred.user.uid
-
-      const collMap = {
-        student: 'students', tutor: 'tutors', parent: 'parents',
-        teacher: 'teachers', principal: 'principals', schoolmember: 'schoolMembers',
+      const { data, error: signUpErr } = await supabase.auth.signUp({ email, password: form.password })
+      if (signUpErr) throw signUpErr
+      if (!data.session) {
+        throw new Error('Email confirmation is switched on in Supabase. Turn it off while developing (Phase 30 turns it on for production).')
       }
-      const col = collMap[type] || type + 's'
 
-      await setDoc(doc(db, col, uid), {
-        uid, name: form.name, email: form.email,
-        orgId: form.org, orgName: orgSearch,
-        role: type, isVerified: false,
-        createdAt: serverTimestamp(),
+      const uid = data.user.id
+
+      const { error: userErr } = await supabase.from('users').insert({
+        id: uid, email, name, role: type, org_id: form.org, is_verified: false,
       })
+      if (userErr) throw userErr
+
+      const roleRow = { user_id: uid }
+      if (ROLES_WITH_ORG.includes(type)) roleRow.org_id = form.org
+      const { error: roleErr } = await supabase.from(ROLE_TABLES[type]).insert(roleRow)
+      if (roleErr) throw roleErr
 
       localStorage.setItem('montemy_role', type)
-      setSuccess(true)
+      navigate('/pending-verification')
     } catch (err) {
-      setError(err.message.replace('Firebase: ', ''))
+      console.error(err)
+      setError(friendlyError(err))
     }
     setLoading(false)
   }
 
-  if (success) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-        {BACKGROUND_VIDEO ? (
-          <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-            <source src={BACKGROUND_VIDEO} type="video/mp4" />
-          </video>
-        ) : (
-          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
-        )}
-        <div style={{ ...glassCard, padding: '3rem 2.5rem', maxWidth: '420px', width: '90%', textAlign: 'center' }} className="glass">
-          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>✅</div>
-          <h2 style={{ color: C.turquoise, fontSize: '1.6rem', marginBottom: '1rem' }}>Account Created!</h2>
-          <p style={{ color: 'rgba(255,255,255,0.7)', lineHeight: '1.7', marginBottom: '2rem' }}>
-            Your account has been created successfully. Please login to continue — your dashboard will be available once an admin verifies your account.
-          </p>
-          <button onClick={() => navigate('/login')} style={{ ...glassBtn }} className="ripple-container">
-            Go to Login
-          </button>
-        </div>
+  const passwordField = (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <label style={labelStyle}>Password</label>
+      <div style={{ position: 'relative' }}>
+        <input className="reg-input" style={glassInput} type={showPassword ? 'text' : 'password'}
+          value={form.password} onChange={setField('password')}
+          placeholder="Create a password (min 6 characters)" required minLength={6} />
+        <button type="button" onClick={() => setShowPassword(s => !s)}
+          style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: C.turquoise }}>
+          {showPassword ? '🙈' : '👁️'}
+        </button>
       </div>
-    )
-  }
+    </div>
+  )
 
   return (
     <div style={{ minHeight: '100vh', position: 'relative', color: 'white' }}>
-      {BACKGROUND_VIDEO ? (
-        <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-          <source src={BACKGROUND_VIDEO} type="video/mp4" />
-        </video>
-      ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
-      )}
+      <Background />
 
       <style>{`
         .reg-input:focus { border-color: rgba(64,224,208,0.8) !important; box-shadow: 0 0 12px rgba(64,224,208,0.25); }
@@ -159,11 +189,17 @@ export default function Register() {
         <div style={{ ...glassCard, padding: '2.5rem' }} className="glass">
 
           <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>{isAdmin ? '🔐' : icons[type]}</div>
+            <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>{isAdmin ? '🔐' : icons[type] || '👤'}</div>
             <h2 style={{ color: C.turquoise, fontSize: '1.6rem' }}>
-              {isAdmin ? 'Admin Access' : `Create ${labels[type] || type} Account`}
+              {isAdmin ? 'Create Admin Account' : `Create ${labels[type] || type} Account`}
             </h2>
           </div>
+
+          {!validRole && (
+            <div style={{ background: 'rgba(255,80,80,0.2)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.9rem 1rem', marginBottom: '1.5rem', color: '#ffaaaa', fontSize: '0.9rem' }}>
+              Unknown account type. Please go back and choose one.
+            </div>
+          )}
 
           {error && (
             <div style={{ background: 'rgba(255,80,80,0.2)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.9rem 1rem', marginBottom: '1.5rem', color: '#ffaaaa', fontSize: '0.9rem' }}>
@@ -172,80 +208,55 @@ export default function Register() {
           )}
 
           <form onSubmit={handleSubmit}>
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={labelStyle}>Full Name</label>
+              <input className="reg-input" style={glassInput} value={form.name}
+                onChange={setField('name')} placeholder="Enter your full name" required />
+            </div>
 
-            {isAdmin ? (
-              <>
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }}>Username</label>
-                  <input className="reg-input" style={glassInput} value={form.username}
-                    onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                    placeholder="Enter username" required />
-                </div>
-                <div style={{ marginBottom: '1.5rem' }}>
-                  <label style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }}>Admin Key</label>
-                  <input className="reg-input" style={glassInput} type="password" value={form.adminKey}
-                    onChange={e => setForm(f => ({ ...f, adminKey: e.target.value }))}
-                    placeholder="Enter admin key" required />
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }}>Full Name</label>
-                  <input className="reg-input" style={glassInput} value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    placeholder="Enter your full name" required />
-                </div>
-
-                <div style={{ marginBottom: '1.25rem', position: 'relative' }}>
-                  <label style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }}>School / Tutor Organisation</label>
-                  <input className="reg-input" style={glassInput} value={orgSearch}
-                    onChange={e => handleOrgSearch(e.target.value)}
-                    placeholder="Search for your school or tutor org..."
-                    autoComplete="off" />
-                  {showOrgDropdown && (
-                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'rgba(0,25,55,0.95)', backdropFilter: 'blur(20px)', border: '1px solid rgba(64,224,208,0.3)', borderRadius: '10px', marginTop: '4px', zIndex: 100, maxHeight: '200px', overflowY: 'auto' }}>
-                      {filteredOrgs.length === 0 ? (
-                        <div style={{ padding: '1rem', color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem', textAlign: 'center' }}>No results found</div>
-                      ) : filteredOrgs.map(org => (
-                        <div key={org.id} className="org-item"
-                          onClick={() => selectOrg(org)}
-                          style={{ padding: '0.75rem 1rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background 0.15s' }}>
-                          <span style={{ color: 'white', fontSize: '0.95rem' }}>{org.name}</span>
-                          <span style={{ color: C.turquoise, fontSize: '0.75rem', marginLeft: '0.5rem', opacity: 0.7 }}>{org.type === 'school' ? '🏫' : '📖'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }}>Email</label>
-                  <input className="reg-input" style={glassInput} type="email" value={form.email}
-                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                    placeholder="Enter your email" required />
-                </div>
-
-                <div style={{ marginBottom: '1.5rem' }}>
-                  <label style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }}>Password</label>
-                  <div style={{ position: 'relative' }}>
-                    <input className="reg-input" style={glassInput} type={showPassword ? 'text' : 'password'} value={form.password}
-                      onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                      placeholder="Create a password" required minLength={6} />
-                    <button type="button" onClick={() => setShowPassword(s => !s)}
-                      style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: C.turquoise }}>
-                      {showPassword ? '🙈' : '👁️'}
-                    </button>
+            {!isAdmin && (
+              <div style={{ marginBottom: '1.25rem', position: 'relative' }}>
+                <label style={labelStyle}>School / Tutor Organisation</label>
+                <input className="reg-input" style={glassInput} value={orgSearch}
+                  onChange={e => handleOrgSearch(e.target.value)}
+                  placeholder="Search for your school or tutor org..." autoComplete="off" />
+                {showOrgDropdown && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'rgba(0,25,55,0.95)', backdropFilter: 'blur(20px)', border: '1px solid rgba(64,224,208,0.3)', borderRadius: '10px', marginTop: '4px', zIndex: 100, maxHeight: '200px', overflowY: 'auto' }}>
+                    {filteredOrgs.length === 0 ? (
+                      <div style={{ padding: '1rem', color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem', textAlign: 'center' }}>No results found</div>
+                    ) : filteredOrgs.map(org => (
+                      <div key={org.id} className="org-item" onClick={() => selectOrg(org)}
+                        style={{ padding: '0.75rem 1rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background 0.15s' }}>
+                        <span style={{ color: 'white', fontSize: '0.95rem' }}>{org.name}</span>
+                        <span style={{ color: C.turquoise, fontSize: '0.75rem', marginLeft: '0.5rem', opacity: 0.7 }}>{org.type === 'school' ? '🏫' : '📖'}</span>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              </>
+                )}
+              </div>
             )}
 
-            <button type="submit" disabled={loading}
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={labelStyle}>Email</label>
+              <input className="reg-input" style={glassInput} type="email" value={form.email}
+                onChange={setField('email')} placeholder="Enter your email" required />
+            </div>
+
+            {passwordField}
+
+            {isAdmin && (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={labelStyle}>Admin Key</label>
+                <input className="reg-input" style={glassInput} type="password" value={form.adminKey}
+                  onChange={setField('adminKey')} placeholder="Enter admin key" required />
+              </div>
+            )}
+
+            <button type="submit" disabled={loading || !validRole}
               onClick={(e) => !loading && addRipple(e)}
-              style={{ ...glassBtn, opacity: loading ? 0.7 : 1 }}
+              style={{ ...glassBtn, opacity: loading || !validRole ? 0.7 : 1 }}
               className="ripple-container">
-              {loading ? 'Creating...' : isAdmin ? 'Access Admin' : 'Create Account'}
+              {loading ? 'Creating...' : 'Create Account'}
             </button>
           </form>
 
