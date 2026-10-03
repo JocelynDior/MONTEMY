@@ -20,3 +20,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 })
 
 export default supabase
+
+// TEMPORARY: legacy pages still import { auth, db } from the old Firebase setup.
+// These placeholders only let the site build. Each page is rewritten to use
+// `supabase` in its own phase; delete these two lines once none remain.
+export const auth = null
+export const db = null
