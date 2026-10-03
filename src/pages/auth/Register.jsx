@@ -76,7 +76,7 @@ export default function Register() {
       .order('name')
     if (error) {
       console.error(error)
-      setError('Could not load schools and organisations. Please refresh the page.')
+      setError(`Could not load schools and organisations (${error.message || 'unknown error'}). Please refresh the page.`)
       return
     }
     setOrgs(data || [])
