@@ -62,6 +62,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [confirmEmail, setConfirmEmail] = useState('')
+  const [verifyChoice, setVerifyChoice] = useState('now')
 
   const setField = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
@@ -125,6 +126,25 @@ export default function Register() {
 
         localStorage.setItem('montemy_role', 'admin')
         navigate('/admin/dashboard')
+        return
+      }
+
+      // "Verify later": Render creates the account with the email pre-approved,
+      // so the user can log in now and verify from their profile later.
+      if (verifyChoice === 'later') {
+        const res = await fetch(`${API_URL}/api/auth/register-later`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password: form.password, role: type, orgId: form.org }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error || 'Registration failed.')
+
+        const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: form.password })
+        if (signInErr) throw signInErr
+
+        localStorage.setItem('montemy_role', type)
+        navigate('/pending-verification')
         return
       }
 
@@ -269,6 +289,28 @@ export default function Register() {
                 <label style={labelStyle}>Admin Key</label>
                 <input className="reg-input" style={glassInput} type="password" value={form.adminKey}
                   onChange={setField('adminKey')} placeholder="Enter admin key" required />
+              </div>
+            )}
+
+            {!isAdmin && (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={labelStyle}>Email verification</label>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  {[
+                    ['now', 'Verify now', 'We email you a link'],
+                    ['later', 'Verify later', 'Skip for now, verify in your profile'],
+                  ].map(([val, title, sub]) => (
+                    <div key={val} onClick={() => setVerifyChoice(val)}
+                      style={{
+                        flex: 1, cursor: 'pointer', padding: '0.75rem', borderRadius: '10px',
+                        border: verifyChoice === val ? '1px solid rgba(64,224,208,0.9)' : '1px solid rgba(255,255,255,0.15)',
+                        background: verifyChoice === val ? 'rgba(64,224,208,0.15)' : 'rgba(255,255,255,0.05)',
+                      }}>
+                      <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem' }}>{title}</div>
+                      <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', marginTop: '0.25rem' }}>{sub}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
