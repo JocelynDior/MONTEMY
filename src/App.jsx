@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
-import { supabase } from './supabase/client'
-import { getProfile, ROLE_ROUTES } from './supabase/authHelpers'
+import React from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+
+import { AuthProvider } from './context/AuthContext'
+import { ProtectedRoute, RoleRoute, PublicOnlyRoute } from './components/routing/RouteGuards'
 
 import Landing from './pages/auth/Landing'
 import Login from './pages/auth/Login'
@@ -34,92 +35,68 @@ import AdminUsers from './pages/admin/AdminUsers'
 import AdminClasses from './pages/admin/AdminClasses'
 import AdminChat from './pages/admin/AdminChat'
 
-const PUBLIC_PATHS = ['/', '/login', '/admin-login', '/create-account', '/signup', '/pending-verification']
-
-// Watches the Supabase session for the whole app.
-// - Session restored while on / or /login -> send the user to their dashboard
-// - Signed out (any tab) -> clear the stored role and leave protected pages
-function AuthListener() {
-  const navigate = useNavigate()
-
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'INITIAL_SESSION' && session) {
-        const path = window.location.pathname
-        if (path === '/' || path === '/login') {
-          // Defer: calling Supabase inside this callback can deadlock
-          setTimeout(async () => {
-            const profile = await getProfile(session.user.id)
-            if (profile && ROLE_ROUTES[profile.role]) {
-              localStorage.setItem('montemy_role', profile.role)
-              navigate(ROLE_ROUTES[profile.role], { replace: true })
-            }
-          }, 0)
-        }
-      }
-
-      if (event === 'SIGNED_OUT') {
-        localStorage.removeItem('montemy_role')
-        if (!PUBLIC_PATHS.includes(window.location.pathname)) {
-          navigate('/', { replace: true })
-        }
-      }
-    })
-    return () => subscription.unsubscribe()
-  }, [navigate])
-
-  return null
-}
+// Signed in AND the right role
+const guard = (role, element) => (
+  <ProtectedRoute>
+    <RoleRoute role={role}>{element}</RoleRoute>
+  </ProtectedRoute>
+)
 
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthListener />
-      <Routes>
-        {/* Auth */}
-        <Route path="/" element={<Landing />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/create-account" element={<AccountTypeSelect />} />
-        <Route path="/register/:type" element={<Register />} />
-        <Route path="/pending-verification" element={<PendingVerification />} />
+      <AuthProvider>
+        <Routes>
+          {/* Public (signed-in users are redirected to their dashboard) */}
+          <Route path="/" element={<PublicOnlyRoute><Landing /></PublicOnlyRoute>} />
+          <Route path="/login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
+          <Route path="/admin-login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
 
-        {/* Legacy routes redirect */}
-        <Route path="/signup" element={<AccountTypeSelect />} />
-        <Route path="/admin-login" element={<Login />} />
+          {/* Registration stays open: it signs the user in itself and then navigates */}
+          <Route path="/create-account" element={<AccountTypeSelect />} />
+          <Route path="/register/:type" element={<Register />} />
+          <Route path="/signup" element={<AccountTypeSelect />} />
 
-        {/* Student */}
-        <Route path="/student/dashboard" element={<StudentDashboard />} />
-        <Route path="/student/academics" element={<StudentAcademics />} />
-        <Route path="/student/resources" element={<StudentResources />} />
-        <Route path="/student/ai-tutor" element={<StudentAiTutor />} />
+          {/* Any signed-in user */}
+          <Route path="/pending-verification" element={<ProtectedRoute><PendingVerification /></ProtectedRoute>} />
 
-        {/* Teacher */}
-        <Route path="/teacher/dashboard" element={<TeacherDashboard />} />
-        <Route path="/teacher/classes" element={<TeacherClasses />} />
-        <Route path="/teacher/assignments" element={<TeacherAssignments />} />
-        <Route path="/teacher/progress" element={<TeacherProgress />} />
+          {/* Student */}
+          <Route path="/student/dashboard" element={guard('student', <StudentDashboard />)} />
+          <Route path="/student/academics" element={guard('student', <StudentAcademics />)} />
+          <Route path="/student/resources" element={guard('student', <StudentResources />)} />
+          <Route path="/student/ai-tutor" element={guard('student', <StudentAiTutor />)} />
 
-        {/* Parent */}
-        <Route path="/parent/dashboard" element={<ParentDashboard />} />
-        <Route path="/parent/mychild" element={<ParentMyChild />} />
+          {/* Teacher */}
+          <Route path="/teacher/dashboard" element={guard('teacher', <TeacherDashboard />)} />
+          <Route path="/teacher/classes" element={guard('teacher', <TeacherClasses />)} />
+          <Route path="/teacher/assignments" element={guard('teacher', <TeacherAssignments />)} />
+          <Route path="/teacher/progress" element={guard('teacher', <TeacherProgress />)} />
 
-        {/* Principal */}
-        <Route path="/principal/dashboard" element={<PrincipalDashboard />} />
-        <Route path="/principal/events" element={<PrincipalEvents />} />
-        <Route path="/principal/stats" element={<PrincipalStats />} />
+          {/* Parent */}
+          <Route path="/parent/dashboard" element={guard('parent', <ParentDashboard />)} />
+          <Route path="/parent/mychild" element={guard('parent', <ParentMyChild />)} />
 
-        {/* Tutor */}
-        <Route path="/tutor/dashboard" element={<TutorDashboard />} />
+          {/* Principal */}
+          <Route path="/principal/dashboard" element={guard('principal', <PrincipalDashboard />)} />
+          <Route path="/principal/events" element={guard('principal', <PrincipalEvents />)} />
+          <Route path="/principal/stats" element={guard('principal', <PrincipalStats />)} />
 
-        {/* School Member */}
-        <Route path="/schoolmember/dashboard" element={<SchoolMemberDashboard />} />
+          {/* Tutor */}
+          <Route path="/tutor/dashboard" element={guard('tutor', <TutorDashboard />)} />
 
-        {/* Admin */}
-        <Route path="/admin/dashboard" element={<AdminDashboard />} />
-        <Route path="/admin/users" element={<AdminUsers />} />
-        <Route path="/admin/classes" element={<AdminClasses />} />
-        <Route path="/admin/chat" element={<AdminChat />} />
-      </Routes>
+          {/* School Member */}
+          <Route path="/schoolmember/dashboard" element={guard('schoolmember', <SchoolMemberDashboard />)} />
+
+          {/* Admin */}
+          <Route path="/admin/dashboard" element={guard('admin', <AdminDashboard />)} />
+          <Route path="/admin/users" element={guard('admin', <AdminUsers />)} />
+          <Route path="/admin/classes" element={guard('admin', <AdminClasses />)} />
+          <Route path="/admin/chat" element={guard('admin', <AdminChat />)} />
+
+          {/* Anything else */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   )
 }
