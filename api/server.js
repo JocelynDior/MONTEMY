@@ -2,6 +2,7 @@ require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const rateLimit = require('express-rate-limit')
+const crypto = require('crypto')
 const { createClient } = require('@supabase/supabase-js')
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 
@@ -39,6 +40,21 @@ const adminRegisterLimiter = rateLimit({
   max: 10,
   message: { error: 'Too many attempts. Try again later.' },
 })
+
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many attempts. Try again later.' },
+})
+
+// Constant-time comparison so the admin key can't be guessed via timing
+function keyMatches(provided) {
+  const expected = process.env.ADMIN_KEY
+  if (!expected || typeof provided !== 'string') return false
+  const a = crypto.createHash('sha256').update(provided).digest()
+  const b = crypto.createHash('sha256').update(expected).digest()
+  return crypto.timingSafeEqual(a, b)
+}
 
 async function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization
@@ -88,12 +104,31 @@ app.post('/api/admin/verify-user', verifyToken, async (req, res) => {
   res.status(400).json({ error: 'Invalid action' })
 })
 
-app.post('/api/admin/validate-key', (req, res) => {
-  const { adminKey } = req.body
-  if (adminKey === process.env.ADMIN_KEY) {
+app.post('/api/admin/validate-key', adminLoginLimiter, (req, res) => {
+  const { adminKey } = req.body || {}
+  if (keyMatches(adminKey)) {
     return res.json({ valid: true })
   }
   res.status(403).json({ valid: false, error: 'Invalid admin key' })
+})
+
+// Admin login check: the caller is already signed in with Supabase.
+// Confirms they are an admin in the users table AND know the admin key.
+app.post('/api/admin/login-check', adminLoginLimiter, verifyToken, async (req, res) => {
+  const { adminKey } = req.body || {}
+
+  const { data: caller } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', req.user.id)
+    .maybeSingle()
+  if (!caller || caller.role !== 'admin') {
+    return res.status(403).json({ error: 'This account is not an admin account.' })
+  }
+  if (!keyMatches(adminKey)) {
+    return res.status(403).json({ error: 'Invalid admin key.' })
+  }
+  res.json({ success: true })
 })
 
 app.post('/api/admin/register', adminRegisterLimiter, async (req, res) => {
