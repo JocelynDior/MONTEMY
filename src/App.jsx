@@ -1,5 +1,7 @@
-import React from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import React, { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import { supabase } from './supabase/client'
+import { getProfile, ROLE_ROUTES } from './supabase/authHelpers'
 
 import Landing from './pages/auth/Landing'
 import Login from './pages/auth/Login'
@@ -32,9 +34,47 @@ import AdminUsers from './pages/admin/AdminUsers'
 import AdminClasses from './pages/admin/AdminClasses'
 import AdminChat from './pages/admin/AdminChat'
 
+const PUBLIC_PATHS = ['/', '/login', '/admin-login', '/create-account', '/signup', '/pending-verification']
+
+// Watches the Supabase session for the whole app.
+// - Session restored while on / or /login -> send the user to their dashboard
+// - Signed out (any tab) -> clear the stored role and leave protected pages
+function AuthListener() {
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION' && session) {
+        const path = window.location.pathname
+        if (path === '/' || path === '/login') {
+          // Defer: calling Supabase inside this callback can deadlock
+          setTimeout(async () => {
+            const profile = await getProfile(session.user.id)
+            if (profile && ROLE_ROUTES[profile.role]) {
+              localStorage.setItem('montemy_role', profile.role)
+              navigate(ROLE_ROUTES[profile.role], { replace: true })
+            }
+          }, 0)
+        }
+      }
+
+      if (event === 'SIGNED_OUT') {
+        localStorage.removeItem('montemy_role')
+        if (!PUBLIC_PATHS.includes(window.location.pathname)) {
+          navigate('/', { replace: true })
+        }
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [navigate])
+
+  return null
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <AuthListener />
       <Routes>
         {/* Auth */}
         <Route path="/" element={<Landing />} />
