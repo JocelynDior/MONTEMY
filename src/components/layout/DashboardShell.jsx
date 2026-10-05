@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../../supabase/client'
-import { getProfile, logout } from '../../supabase/authHelpers'
+import { logout } from '../../supabase/authHelpers'
+import { useAuth } from '../../context/AuthContext'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -11,25 +11,12 @@ import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 // (the old `collection` prop is no longer needed and is ignored)
 export default function DashboardShell({ role, cards = [] }) {
   const navigate = useNavigate()
-  const [profile, setProfile] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let active = true
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session) { navigate('/login'); return }
-      const p = await getProfile(session.user.id)
-      if (active) { setProfile(p); setLoading(false) }
-    })
-    return () => { active = false }
-  }, [])
+  const { profile, loading, isVerified: verified } = useAuth()
 
   const handleLogout = async () => {
     await logout()
     navigate('/')
   }
-
-  const verified = !!profile?.is_verified
 
   return (
     <div style={{ minHeight: '100vh', position: 'relative', color: 'white' }}>
