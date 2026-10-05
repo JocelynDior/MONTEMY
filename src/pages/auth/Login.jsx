@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
 import { getProfile, ROLE_ROUTES } from '../../supabase/authHelpers'
+import { useAuth } from '../../context/AuthContext'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
 
@@ -19,6 +20,7 @@ function friendlyError(err) {
 export default function Login() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { holdRedirect } = useAuth()
   const [isAdmin, setIsAdmin] = useState(location.pathname === '/admin-login')
   const [form, setForm] = useState({ email: '', password: '', adminKey: '' })
   const [showPassword, setShowPassword] = useState(false)
@@ -36,6 +38,7 @@ export default function Login() {
     e.preventDefault()
     setError('')
     setLoading(true)
+    holdRedirect(true) // stop the route guard redirecting before our checks finish
 
     try {
       const email = form.email.trim().toLowerCase()
@@ -88,6 +91,7 @@ export default function Login() {
       console.error(err)
       setError(friendlyError(err))
     } finally {
+      holdRedirect(false)
       setLoading(false)
     }
   }
