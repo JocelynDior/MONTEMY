@@ -2,6 +2,7 @@ import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 
 import { AuthProvider } from './context/AuthContext'
+import { BrandingProvider } from './context/BrandingContext'
 import { ProtectedRoute, RoleRoute, PublicOnlyRoute } from './components/routing/RouteGuards'
 
 import Landing from './pages/auth/Landing'
@@ -46,6 +47,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <BrandingProvider>
         <Routes>
           {/* Public (signed-in users are redirected to their dashboard) */}
           <Route path="/" element={<PublicOnlyRoute><Landing /></PublicOnlyRoute>} />
@@ -96,6 +98,7 @@ export default function App() {
           {/* Anything else */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </BrandingProvider>
       </AuthProvider>
     </BrowserRouter>
   )
