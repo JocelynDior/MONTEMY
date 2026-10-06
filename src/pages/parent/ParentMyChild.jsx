@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { auth, db } from '../../supabase/client'
 
-const s = { navy: '#001F3F', turquoise: '#40E0D0', lightNavy: '#0A2A4A' }
+const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)', lightNavy: 'var(--color-bg-light)' }
 
 export default function ParentMyChild() {
   const navigate = useNavigate()
