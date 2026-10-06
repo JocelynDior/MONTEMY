@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { auth, db } from '../../supabase/client'
 
-const s = { navy: '#001F3F', turquoise: '#40E0D0' }
+const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
 
 export default function PrincipalEvents() {
   const navigate = useNavigate()
@@ -76,7 +76,7 @@ export default function PrincipalEvents() {
           <div style={{ position: 'absolute', right: 0, top: '50px', background: s.turquoise, minWidth: '160px', borderRadius: '10px', boxShadow: '0 8px 16px rgba(0,0,0,0.2)', zIndex: 10, overflow: 'hidden' }}>
             {[['Back to Dashboard', () => navigate('/principal/dashboard')], ['Logout', async () => { await signOut(auth); navigate('/') }]].map(([label, fn]) => (
               <div key={label} onClick={() => { setMenuOpen(false); fn() }} style={{ color: s.navy, padding: '12px 16px', cursor: 'pointer', fontWeight: 'bold' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,31,63,0.1)'}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(var(--color-bg-rgb),0.1)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>{label}</div>
             ))}
           </div>
