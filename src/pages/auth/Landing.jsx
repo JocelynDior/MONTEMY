@@ -51,12 +51,12 @@ export default function Landing() {
           <source src={BACKGROUND_VIDEO} type="video/mp4" />
         </video>
       ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
       )}
 
       {/* Animated orbs */}
-      <div style={{ position: 'fixed', top: '15%', left: '10%', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(64,224,208,0.15) 0%, transparent 70%)', animation: 'orbFloat 7s ease-in-out infinite', pointerEvents: 'none', zIndex: 0 }} />
-      <div style={{ position: 'fixed', bottom: '15%', right: '10%', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(64,224,208,0.1) 0%, transparent 70%)', animation: 'orbFloat 10s ease-in-out infinite reverse', pointerEvents: 'none', zIndex: 0 }} />
+      <div style={{ position: 'fixed', top: '15%', left: '10%', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--color-primary-rgb),0.15) 0%, transparent 70%)', animation: 'orbFloat 7s ease-in-out infinite', pointerEvents: 'none', zIndex: 0 }} />
+      <div style={{ position: 'fixed', bottom: '15%', right: '10%', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--color-primary-rgb),0.1) 0%, transparent 70%)', animation: 'orbFloat 10s ease-in-out infinite reverse', pointerEvents: 'none', zIndex: 0 }} />
 
       <style>{`
         @keyframes orbFloat {
@@ -64,15 +64,15 @@ export default function Landing() {
           50% { transform: translateY(-30px) scale(1.05); }
         }
         @keyframes logoGlow {
-          0%,100% { text-shadow: 0 0 20px rgba(64,224,208,0.6), 0 0 40px rgba(64,224,208,0.3); }
-          50% { text-shadow: 0 0 35px rgba(64,224,208,0.9), 0 0 70px rgba(64,224,208,0.5); }
+          0%,100% { text-shadow: 0 0 20px rgba(var(--color-primary-rgb),0.6), 0 0 40px rgba(var(--color-primary-rgb),0.3); }
+          50% { text-shadow: 0 0 35px rgba(var(--color-primary-rgb),0.9), 0 0 70px rgba(var(--color-primary-rgb),0.5); }
         }
         .land-btn {
           transition: transform 0.2s, box-shadow 0.2s !important;
         }
         .land-btn:hover {
           transform: translateY(-3px) !important;
-          box-shadow: 0 0 35px rgba(64,224,208,0.7) !important;
+          box-shadow: 0 0 35px rgba(var(--color-primary-rgb),0.7) !important;
         }
         .land-btn:active { transform: scale(0.97) !important; }
       `}</style>
@@ -88,7 +88,7 @@ export default function Landing() {
         </p>
 
         {/* Divider */}
-        <div style={{ height: '1px', background: 'linear-gradient(to right, transparent, rgba(64,224,208,0.5), transparent)', marginBottom: '2rem' }} />
+        <div style={{ height: '1px', background: 'linear-gradient(to right, transparent, rgba(var(--color-primary-rgb),0.5), transparent)', marginBottom: '2rem' }} />
 
         {/* Buttons */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -99,7 +99,7 @@ export default function Landing() {
           </button>
           <button className="land-btn ripple-container"
             onClick={(e) => { addRipple(e); navigate('/create-account') }}
-            style={{ ...glassBtn, background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid rgba(64,224,208,0.5)', boxShadow: '0 0 20px rgba(64,224,208,0.15)', fontSize: '1.1rem', padding: '1rem' }}>
+            style={{ ...glassBtn, background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid rgba(var(--color-primary-rgb),0.5)', boxShadow: '0 0 20px rgba(var(--color-primary-rgb),0.15)', fontSize: '1.1rem', padding: '1rem' }}>
             Create Account
           </button>
         </div>
