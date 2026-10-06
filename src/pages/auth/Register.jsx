@@ -43,7 +43,7 @@ function Background() {
       <source src={BACKGROUND_VIDEO} type="video/mp4" />
     </video>
   ) : (
-    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
   )
 }
 
@@ -216,11 +216,11 @@ export default function Register() {
       <Background />
 
       <style>{`
-        .reg-input:focus { border-color: rgba(64,224,208,0.8) !important; box-shadow: 0 0 12px rgba(64,224,208,0.25); }
-        .org-item:hover { background: rgba(64,224,208,0.15) !important; }
+        .reg-input:focus { border-color: rgba(var(--color-primary-rgb),0.8) !important; box-shadow: 0 0 12px rgba(var(--color-primary-rgb),0.25); }
+        .org-item:hover { background: rgba(var(--color-primary-rgb),0.15) !important; }
       `}</style>
 
-      <nav style={{ background: 'rgba(0,31,63,0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(64,224,208,0.25)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', gap: '1rem', position: 'sticky', top: 0, zIndex: 50 }}>
+      <nav style={{ background: 'rgba(var(--color-bg-rgb),0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(var(--color-primary-rgb),0.25)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', gap: '1rem', position: 'sticky', top: 0, zIndex: 50 }}>
         <button onClick={() => navigate('/create-account')} style={{ background: 'none', border: 'none', color: C.turquoise, fontSize: '1.4rem', cursor: 'pointer' }}>←</button>
         <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>MONTEMY</span>
       </nav>
@@ -261,7 +261,7 @@ export default function Register() {
                   onChange={e => handleOrgSearch(e.target.value)}
                   placeholder="Search for your school or tutor org..." autoComplete="off" />
                 {showOrgDropdown && (
-                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'rgba(0,25,55,0.95)', backdropFilter: 'blur(20px)', border: '1px solid rgba(64,224,208,0.3)', borderRadius: '10px', marginTop: '4px', zIndex: 100, maxHeight: '200px', overflowY: 'auto' }}>
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'rgba(var(--color-bg-dark-rgb),0.95)', backdropFilter: 'blur(20px)', border: '1px solid rgba(var(--color-primary-rgb),0.3)', borderRadius: '10px', marginTop: '4px', zIndex: 100, maxHeight: '200px', overflowY: 'auto' }}>
                     {filteredOrgs.length === 0 ? (
                       <div style={{ padding: '1rem', color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem', textAlign: 'center' }}>No results found</div>
                     ) : filteredOrgs.map(org => (
@@ -303,8 +303,8 @@ export default function Register() {
                     <div key={val} onClick={() => setVerifyChoice(val)}
                       style={{
                         flex: 1, cursor: 'pointer', padding: '0.75rem', borderRadius: '10px',
-                        border: verifyChoice === val ? '1px solid rgba(64,224,208,0.9)' : '1px solid rgba(255,255,255,0.15)',
-                        background: verifyChoice === val ? 'rgba(64,224,208,0.15)' : 'rgba(255,255,255,0.05)',
+                        border: verifyChoice === val ? '1px solid rgba(var(--color-primary-rgb),0.9)' : '1px solid rgba(255,255,255,0.15)',
+                        background: verifyChoice === val ? 'rgba(var(--color-primary-rgb),0.15)' : 'rgba(255,255,255,0.05)',
                       }}>
                       <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem' }}>{title}</div>
                       <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', marginTop: '0.25rem' }}>{sub}</div>
