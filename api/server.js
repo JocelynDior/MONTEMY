@@ -78,30 +78,86 @@ app.get('/ping', (req, res) => {
   res.json({ pong: true })
 })
 
-app.post('/api/admin/verify-user', verifyToken, async (req, res) => {
-  const { userId, action } = req.body
-  const { data: callerData } = await supabase
+// Only lets admin accounts through (use after verifyToken)
+async function requireAdmin(req, res, next) {
+  const { data: caller } = await supabase
     .from('users')
     .select('role')
     .eq('id', req.user.id)
-    .single()
-  if (!callerData || callerData.role !== 'admin') {
+    .maybeSingle()
+  if (!caller || caller.role !== 'admin') {
     return res.status(403).json({ error: 'Admins only' })
   }
+  next()
+}
+
+const ROLE_TABLES = ['students', 'teachers', 'parents', 'principals', 'tutors', 'school_members']
+
+// Users waiting for admin approval, with their organisation name
+app.get('/api/admin/pending-users', verifyToken, requireAdmin, async (req, res) => {
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, name, email, role, org_id, email_verified, created_at')
+    .eq('is_verified', false)
+    .neq('role', 'admin')
+    .order('created_at', { ascending: true })
+  if (error) return res.status(500).json({ error: error.message })
+
+  const orgIds = [...new Set(users.map(u => u.org_id).filter(Boolean))]
+  const orgNames = {}
+  if (orgIds.length) {
+    const { data: orgs } = await supabase.from('organizations').select('id, name').in('id', orgIds)
+    ;(orgs || []).forEach(o => { orgNames[o.id] = o.name })
+  }
+  res.json({ users: users.map(u => ({ ...u, org_name: orgNames[u.org_id] || null })) })
+})
+
+// Headline numbers for the admin overview
+app.get('/api/admin/stats', verifyToken, requireAdmin, async (req, res) => {
+  const [total, pending, orgs] = await Promise.all([
+    supabase.from('users').select('id', { count: 'exact', head: true }),
+    supabase.from('users').select('id', { count: 'exact', head: true }).eq('is_verified', false).neq('role', 'admin'),
+    supabase.from('organizations').select('id', { count: 'exact', head: true }),
+  ])
+  res.json({
+    totalUsers: total.count || 0,
+    pendingUsers: pending.count || 0,
+    organizations: orgs.count || 0,
+  })
+})
+
+// Approve or reject a pending user
+app.post('/api/admin/verify-user', verifyToken, requireAdmin, async (req, res) => {
+  const { userId, action } = req.body || {}
+  if (!userId || !['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ error: 'userId and a valid action are required' })
+  }
+
+  const { data: target } = await supabase
+    .from('users').select('id, role').eq('id', userId).maybeSingle()
+  if (!target) return res.status(404).json({ error: 'User not found' })
+
   if (action === 'approve') {
-    const { error } = await supabase
-      .from('users')
-      .update({ is_verified: true })
-      .eq('id', userId)
+    const { error } = await supabase.from('users').update({ is_verified: true }).eq('id', userId)
     if (error) return res.status(500).json({ error: error.message })
     return res.json({ success: true, message: 'User approved' })
   }
-  if (action === 'reject') {
-    await supabase.from('users').delete().eq('id', userId)
-    await supabase.auth.admin.deleteUser(userId)
-    return res.json({ success: true, message: 'User rejected and deleted' })
+
+  // reject
+  if (target.role === 'admin' || target.id === req.user.id) {
+    return res.status(403).json({ error: 'Admin accounts cannot be rejected.' })
   }
-  res.status(400).json({ error: 'Invalid action' })
+  // Remove role rows first so foreign keys can't block the delete
+  for (const table of ROLE_TABLES) {
+    await supabase.from(table).delete().eq('user_id', userId)
+  }
+  const { error: authErr } = await supabase.auth.admin.deleteUser(userId)
+  if (authErr) {
+    console.error('Reject failed:', authErr)
+    return res.status(500).json({ error: 'Could not delete user: ' + authErr.message })
+  }
+  await supabase.from('users').delete().eq('id', userId) // no-op if it already cascaded
+  res.json({ success: true, message: 'User rejected and deleted' })
 })
 
 app.post('/api/admin/validate-key', adminLoginLimiter, (req, res) => {
