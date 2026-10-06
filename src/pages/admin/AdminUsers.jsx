@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { db } from '../../supabase/client'
 
 const COLLECTIONS = ['students', 'teachers', 'parents', 'principals', 'staff']
-const s = { navy: '#001F3F', turquoise: '#40E0D0' }
+const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
 
 export default function AdminUsers() {
   const navigate = useNavigate()
@@ -123,7 +123,7 @@ export default function AdminUsers() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
               <div>
                 <div style={{ color: s.turquoise, fontSize: '1.2rem', fontWeight: 'bold' }}>{user.name}</div>
-                <span style={{ background: 'rgba(64,224,208,0.2)', color: s.turquoise, padding: '0.2rem 0.8rem', borderRadius: '15px', fontSize: '0.8rem', textTransform: 'capitalize' }}>{user.collection}</span>
+                <span style={{ background: 'rgba(var(--color-primary-rgb),0.2)', color: s.turquoise, padding: '0.2rem 0.8rem', borderRadius: '15px', fontSize: '0.8rem', textTransform: 'capitalize' }}>{user.collection}</span>
                 <span style={{ background: user.isVerified ? '#2ecc71' : '#e74c3c', color: 'white', padding: '0.2rem 0.8rem', borderRadius: '15px', fontSize: '0.8rem', marginLeft: '0.5rem' }}>
                   {user.isVerified ? 'Verified' : 'Not Verified'}
                 </span>
@@ -137,7 +137,7 @@ export default function AdminUsers() {
                   <div style={{ position: 'absolute', top: '100%', right: 0, background: s.navy, border: `1px solid ${s.turquoise}`, borderRadius: '8px', padding: '0.5rem', minWidth: '180px', zIndex: 100 }}>
                     <button onClick={() => { toggleVerify(user); setOpenMenu(null) }}
                       style={{ display: 'block', width: '100%', padding: '0.6rem 1rem', background: 'none', border: 'none', color: 'white', cursor: 'pointer', textAlign: 'left', borderRadius: '5px' }}
-                      onMouseEnter={e => e.target.style.background = 'rgba(64,224,208,0.1)'}
+                      onMouseEnter={e => e.target.style.background = 'rgba(var(--color-primary-rgb),0.1)'}
                       onMouseLeave={e => e.target.style.background = 'none'}>
                       {user.isVerified ? '🔒 Unverify' : '✅ Verify'}
                     </button>
