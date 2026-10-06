@@ -1,0 +1,15 @@
+/* Default Montemy theme. BrandingProvider overrides these at runtime per organisation. */
+:root {
+  --color-primary: #40E0D0;
+  --color-primary-rgb: 64, 224, 208;
+  --color-primary-dark: #20B2AA;
+  --color-primary-dark-rgb: 32, 178, 170;
+  --color-bg: #001F3F;
+  --color-bg-rgb: 0, 31, 63;
+  --color-bg-2: #003366;
+  --color-bg-2-rgb: 0, 51, 102;
+  --color-bg-light: #0A2A4A;
+  --color-bg-light-rgb: 10, 42, 74;
+  --color-bg-dark: #001A35;
+  --color-bg-dark-rgb: 0, 26, 53;
+}
