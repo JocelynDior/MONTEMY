@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
-import { getProfile, ROLE_ROUTES, homeRouteFor } from '../../supabase/authHelpers'
+import { getProfile, ROLE_ROUTES } from '../../supabase/authHelpers'
 import { useAuth } from '../../context/AuthContext'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
@@ -86,7 +86,7 @@ export default function Login() {
       }
 
       localStorage.setItem('montemy_role', profile.role)
-      navigate(homeRouteFor(profile))
+      navigate(ROLE_ROUTES[profile.role])
     } catch (err) {
       console.error(err)
       setError(friendlyError(err))
@@ -105,15 +105,15 @@ export default function Login() {
           <source src={BACKGROUND_VIDEO} type="video/mp4" />
         </video>
       ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
       )}
 
       <style>{`
-        .login-input:focus { border-color: rgba(64,224,208,0.8) !important; box-shadow: 0 0 12px rgba(64,224,208,0.25); }
+        .login-input:focus { border-color: rgba(var(--color-primary-rgb),0.8) !important; box-shadow: 0 0 12px rgba(var(--color-primary-rgb),0.25); }
         .toggle-tab { transition: all 0.2s; cursor: pointer; padding: 0.6rem 1.5rem; border-radius: 8px; font-weight: 600; font-size: 0.95rem; border: none; }
       `}</style>
 
-      <nav style={{ position: 'fixed', top: 0, left: 0, right: 0, background: 'rgba(0,31,63,0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(64,224,208,0.2)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', zIndex: 50 }}>
+      <nav style={{ position: 'fixed', top: 0, left: 0, right: 0, background: 'rgba(var(--color-bg-rgb),0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(var(--color-primary-rgb),0.2)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', zIndex: 50 }}>
         <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: C.turquoise, fontSize: '1.4rem', cursor: 'pointer', marginRight: '1rem' }}>←</button>
         <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>MONTEMY</span>
       </nav>
@@ -131,7 +131,7 @@ export default function Login() {
             <button key={label} type="button"
               className="toggle-tab"
               onClick={() => { setIsAdmin(val); setError('') }}
-              style={{ flex: 1, background: isAdmin === val ? 'rgba(64,224,208,0.85)' : 'transparent', color: isAdmin === val ? C.navy : 'rgba(255,255,255,0.6)' }}>
+              style={{ flex: 1, background: isAdmin === val ? 'rgba(var(--color-primary-rgb),0.85)' : 'transparent', color: isAdmin === val ? C.navy : 'rgba(255,255,255,0.6)' }}>
               {label}
             </button>
           ))}
