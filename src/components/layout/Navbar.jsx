@@ -1,7 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const s = { navy: '#001F3F', turquoise: '#40E0D0' }
+const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
 
 export default function Navbar({ title = 'MONTEMY', links = [] }) {
   const navigate = useNavigate()
