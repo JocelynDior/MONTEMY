@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
-import { getProfile, ROLE_ROUTES } from '../../supabase/authHelpers'
+import { getProfile, ROLE_ROUTES, homeRouteFor } from '../../supabase/authHelpers'
 import { useAuth } from '../../context/AuthContext'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
@@ -86,7 +86,7 @@ export default function Login() {
       }
 
       localStorage.setItem('montemy_role', profile.role)
-      navigate(ROLE_ROUTES[profile.role])
+      navigate(homeRouteFor(profile))
     } catch (err) {
       console.error(err)
       setError(friendlyError(err))
