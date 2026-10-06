@@ -20,7 +20,7 @@ export default function AdminChat() {
   const messagesEndRef = useRef(null)
   const unsubRef = useRef(null)
 
-  const s = { navy: '#001F3F', turquoise: '#40E0D0', darkNavy: '#001A35', lightNavy: '#0A2A4A' }
+  const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)', darkNavy: 'var(--color-bg-dark)', lightNavy: 'var(--color-bg-light)' }
 
   const getConversationId = (userId) => {
     const users = [ADMIN_USER_ID, userId].sort()
