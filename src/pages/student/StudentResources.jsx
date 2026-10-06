@@ -1,7 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const s = { navy: '#001F3F', turquoise: '#40E0D0' }
+const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
 
 const resources = [
   { icon: '📖', title: 'Study Guides', description: 'Access curated study materials for all subjects.' },
@@ -23,7 +23,7 @@ export default function StudentResources() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
           {resources.map(r => (
             <div key={r.title} style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '12px', borderLeft: `4px solid ${s.turquoise}`, padding: '1.5rem', cursor: 'pointer' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(64,224,208,0.1)'}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(var(--color-primary-rgb),0.1)'}
               onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}>
               <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>{r.icon}</div>
               <h3 style={{ color: s.turquoise, marginBottom: '0.5rem' }}>{r.title}</h3>
