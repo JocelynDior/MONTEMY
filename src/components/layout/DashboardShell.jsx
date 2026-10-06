@@ -25,7 +25,7 @@ export default function DashboardShell({ role, cards = [] }) {
           <source src={BACKGROUND_VIDEO} type="video/mp4" />
         </video>
       ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
       )}
 
       <nav style={glassNav}>
