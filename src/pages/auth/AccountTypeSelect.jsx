@@ -9,7 +9,7 @@ const accounts = [
     icon: '🎓',
     label: 'Student',
     description: 'Access your subjects, submit homework, track your grades, get 24/7 AI tutor support, and communicate with your teachers.',
-    color: 'rgba(64,224,208,0.2)',
+    color: 'rgba(var(--color-primary-rgb),0.2)',
   },
   {
     id: 'tutor',
@@ -75,7 +75,7 @@ export default function AccountTypeSelect() {
           <source src={BACKGROUND_VIDEO} type="video/mp4" />
         </video>
       ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, #001F3F 0%, #003366 100%)', zIndex: -1 }} />
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
       )}
 
       <style>{`
@@ -94,14 +94,14 @@ export default function AccountTypeSelect() {
         }
         .acct-block:hover {
           transform: translateY(-4px) scale(1.02) !important;
-          box-shadow: 0 12px 40px rgba(64,224,208,0.35) !important;
+          box-shadow: 0 12px 40px rgba(var(--color-primary-rgb),0.35) !important;
         }
         .acct-block.animating {
           animation: blockPop 0.3s ease;
         }
         .acct-block.selected {
-          border-color: rgba(64,224,208,0.8) !important;
-          box-shadow: 0 0 35px rgba(64,224,208,0.5) !important;
+          border-color: rgba(var(--color-primary-rgb),0.8) !important;
+          box-shadow: 0 0 35px rgba(var(--color-primary-rgb),0.5) !important;
           transform: scale(1.03) !important;
         }
         .expand-anim {
@@ -112,14 +112,14 @@ export default function AccountTypeSelect() {
           position:absolute;
           top:-80%;left:-80%;
           width:260%;height:260%;
-          background: radial-gradient(ellipse at 30% 40%, rgba(64,224,208,0.12) 0%, transparent 60%);
+          background: radial-gradient(ellipse at 30% 40%, rgba(var(--color-primary-rgb),0.12) 0%, transparent 60%);
           animation: glassWave 6s ease-in-out infinite;
           pointer-events:none;
         }
       `}</style>
 
       {/* Nav */}
-      <nav style={{ background: 'rgba(0,31,63,0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(64,224,208,0.25)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', gap: '1rem', position: 'sticky', top: 0, zIndex: 50 }}>
+      <nav style={{ background: 'rgba(var(--color-bg-rgb),0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(var(--color-primary-rgb),0.25)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', gap: '1rem', position: 'sticky', top: 0, zIndex: 50 }}>
         <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: C.turquoise, fontSize: '1.4rem', cursor: 'pointer' }}>←</button>
         <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>MONTEMY</span>
         <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.9rem', marginLeft: 'auto' }}>Select your account type</span>
@@ -143,8 +143,8 @@ export default function AccountTypeSelect() {
                 ...glassCard,
                 padding: '1.75rem',
                 textAlign: 'center',
-                border: selected?.id === acct.id ? '1px solid rgba(64,224,208,0.8)' : '1px solid rgba(255,255,255,0.15)',
-                background: selected?.id === acct.id ? 'rgba(64,224,208,0.12)' : acct.color,
+                border: selected?.id === acct.id ? '1px solid rgba(var(--color-primary-rgb),0.8)' : '1px solid rgba(255,255,255,0.15)',
+                background: selected?.id === acct.id ? 'rgba(var(--color-primary-rgb),0.12)' : acct.color,
               }}
             >
               <div style={{ fontSize: '2.8rem', marginBottom: '0.6rem' }}>{acct.icon}</div>
@@ -155,7 +155,7 @@ export default function AccountTypeSelect() {
               {/* Expanded section */}
               {selected?.id === acct.id && (
                 <div className="expand-anim" style={{ marginTop: '1rem', overflow: 'hidden' }}>
-                  <div style={{ height: '1px', background: 'rgba(64,224,208,0.3)', marginBottom: '1rem' }} />
+                  <div style={{ height: '1px', background: 'rgba(var(--color-primary-rgb),0.3)', marginBottom: '1rem' }} />
                   <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.88rem', lineHeight: '1.65', marginBottom: '1.25rem' }}>
                     {acct.description}
                   </p>
