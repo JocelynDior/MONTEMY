@@ -1,6 +1,6 @@
 import React from 'react'
 
-const s = { navy: '#001F3F', turquoise: '#40E0D0' }
+const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
 
 export default function Modal({ open, onClose, title, children }) {
   if (!open) return null
