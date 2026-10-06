@@ -1,16 +1,33 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../../supabase/client'
+import { useAuth } from '../../context/AuthContext'
+import { logout, ROLE_ROUTES } from '../../supabase/authHelpers'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, addRipple, C } from '../../styles/glass'
 
 export default function PendingVerification() {
   const navigate = useNavigate()
+  const { role, isVerified, refreshProfile } = useAuth()
+  const [checking, setChecking] = useState(false)
+  const [checked, setChecked] = useState(false)
+
+  // As soon as the account is approved, go to the real dashboard
+  useEffect(() => {
+    if (isVerified && role && ROLE_ROUTES[role]) {
+      navigate(ROLE_ROUTES[role], { replace: true })
+    }
+  }, [isVerified, role])
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
-    localStorage.removeItem('montemy_role')
+    await logout()
     navigate('/')
+  }
+
+  const handleCheck = async () => {
+    setChecking(true)
+    await refreshProfile()
+    setChecking(false)
+    setChecked(true)
   }
 
   return (
@@ -24,7 +41,6 @@ export default function PendingVerification() {
       )}
 
       <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pulse { 0%,100%{opacity:0.5;transform:scale(1);} 50%{opacity:1;transform:scale(1.08);} }
       `}</style>
 
@@ -35,14 +51,25 @@ export default function PendingVerification() {
         <p style={{ color: 'rgba(255,255,255,0.75)', lineHeight: '1.8', marginBottom: '1rem', fontSize: '0.95rem' }}>
           Your account has been created successfully and is currently <strong style={{ color: C.turquoise }}>awaiting admin verification</strong>.
         </p>
-        <p style={{ color: 'rgba(255,255,255,0.55)', lineHeight: '1.7', marginBottom: '2rem', fontSize: '0.9rem' }}>
+        <p style={{ color: 'rgba(255,255,255,0.55)', lineHeight: '1.7', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
           Once verified, you will have full access to your dashboard. You can still browse your dashboard in preview mode, but some features will be locked until verification is complete.
         </p>
+
+        {checked && !isVerified && (
+          <p style={{ color: '#ffe08a', fontSize: '0.9rem', marginBottom: '1rem' }}>
+            Still waiting for approval. Check back soon.
+          </p>
+        )}
+
         <div style={{ display: 'flex', gap: '1rem', flexDirection: 'column' }}>
-          <button onClick={(e) => { addRipple(e); navigate(-1) }}
+          <button onClick={(e) => { addRipple(e); navigate(ROLE_ROUTES[role] || '/login') }}
             className="ripple-container"
             style={{ ...glassBtn }}>
             View Dashboard Preview
+          </button>
+          <button onClick={handleCheck} disabled={checking}
+            style={{ ...glassBtn, background: 'rgba(64,224,208,0.15)', color: C.turquoise, border: '1px solid rgba(64,224,208,0.4)', boxShadow: 'none', opacity: checking ? 0.7 : 1 }}>
+            {checking ? 'Checking...' : 'Check Verification Status'}
           </button>
           <button onClick={handleLogout}
             style={{ ...glassBtn, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.2)', boxShadow: 'none' }}>
