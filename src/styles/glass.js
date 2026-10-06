@@ -1,8 +1,8 @@
 // Shared glass/liquid style utilities
 export const C = {
-  navy: '#001F3F',
-  turquoise: '#40E0D0',
-  navyAlpha: 'rgba(0,31,63,0.7)',
+  navy: 'var(--color-bg)',
+  turquoise: 'var(--color-primary)',
+  navyAlpha: 'rgba(var(--color-bg-rgb),0.7)',
 }
 
 export const glassCard = {
@@ -17,10 +17,10 @@ export const glassCard = {
 }
 
 export const glassNav = {
-  background: 'rgba(0,31,63,0.55)',
+  background: 'rgba(var(--color-bg-rgb),0.55)',
   backdropFilter: 'blur(20px) saturate(180%)',
   WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-  borderBottom: '1px solid rgba(64,224,208,0.3)',
+  borderBottom: '1px solid rgba(var(--color-primary-rgb),0.3)',
   position: 'sticky',
   top: 0,
   zIndex: 100,
@@ -34,7 +34,7 @@ export const glassInput = {
   width: '100%',
   padding: '0.85rem 1rem',
   background: 'rgba(255,255,255,0.1)',
-  border: '1px solid rgba(64,224,208,0.4)',
+  border: '1px solid rgba(var(--color-primary-rgb),0.4)',
   borderRadius: '10px',
   color: 'white',
   fontSize: '1rem',
@@ -43,9 +43,9 @@ export const glassInput = {
 }
 
 export const glassBtn = {
-  background: 'linear-gradient(135deg, rgba(64,224,208,0.9), rgba(32,178,170,0.9))',
+  background: 'linear-gradient(135deg, rgba(var(--color-primary-rgb),0.9), rgba(var(--color-primary-dark-rgb),0.9))',
   backdropFilter: 'blur(10px)',
-  color: '#001F3F',
+  color: 'var(--color-bg)',
   border: 'none',
   padding: '0.9rem 1.5rem',
   borderRadius: '10px',
@@ -53,7 +53,7 @@ export const glassBtn = {
   cursor: 'pointer',
   fontSize: '1rem',
   fontFamily: 'Roboto Slab, serif',
-  boxShadow: '0 0 20px rgba(64,224,208,0.4)',
+  boxShadow: '0 0 20px rgba(var(--color-primary-rgb),0.4)',
   transition: 'all 0.2s',
   width: '100%',
 }
