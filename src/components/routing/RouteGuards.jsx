@@ -1,7 +1,7 @@
 import React from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { ROLE_ROUTES } from '../../supabase/authHelpers'
+import { ROLE_ROUTES, homeRouteFor } from '../../supabase/authHelpers'
 import LoadingScreen from '../shared/LoadingScreen'
 
 // Requires a signed-in user. No session -> /login.
@@ -36,7 +36,7 @@ export function PublicOnlyRoute({ children }) {
   // Only wait on the very first check, so the login form is never unmounted mid-login
   if (initializing) return <LoadingScreen />
   if (session && profile && ROLE_ROUTES[profile.role] && !redirectHeld()) {
-    return <Navigate to={ROLE_ROUTES[profile.role]} replace />
+    return <Navigate to={homeRouteFor(profile)} replace />
   }
   return children
 }
