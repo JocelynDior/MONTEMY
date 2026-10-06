@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { auth, db } from '../../supabase/client'
 
-const s = { navy: '#001F3F', turquoise: '#40E0D0', lightNavy: '#0A2A4A' }
+const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)', lightNavy: 'var(--color-bg-light)' }
 const TABS = ['Subjects', 'Schedule', 'Homework', 'Progress']
 
 export default function StudentAcademics() {
@@ -63,7 +63,7 @@ export default function StudentAcademics() {
       </nav>
 
       {/* Tabs */}
-      <div style={{ background: '#001A35', display: 'flex', overflowX: 'auto', borderBottom: `2px solid ${s.turquoise}` }}>
+      <div style={{ background: 'var(--color-bg-dark)', display: 'flex', overflowX: 'auto', borderBottom: `2px solid ${s.turquoise}` }}>
         {TABS.map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             style={{ padding: '1rem 1.5rem', background: activeTab === tab ? s.turquoise : 'transparent', color: activeTab === tab ? s.navy : s.turquoise, border: 'none', cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap', borderBottom: activeTab === tab ? `3px solid ${s.navy}` : 'none' }}>
@@ -98,7 +98,7 @@ export default function StudentAcademics() {
                     <div style={{ color: s.turquoise, fontWeight: 'bold', fontSize: '1.1rem', marginBottom: '0.5rem' }}>{day.day}</div>
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                       {day.periods.map((p, i) => (
-                        <span key={i} style={{ background: 'rgba(64,224,208,0.2)', color: s.turquoise, padding: '0.3rem 0.8rem', borderRadius: '15px', fontSize: '0.9rem' }}>
+                        <span key={i} style={{ background: 'rgba(var(--color-primary-rgb),0.2)', color: s.turquoise, padding: '0.3rem 0.8rem', borderRadius: '15px', fontSize: '0.9rem' }}>
                           P{i+1}: {p}
                         </span>
                       ))}
