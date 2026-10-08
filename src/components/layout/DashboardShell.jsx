@@ -2,6 +2,7 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { logout } from '../../supabase/authHelpers'
 import { useAuth } from '../../context/AuthContext'
+import { useBranding } from '../../context/BrandingContext'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -12,6 +13,7 @@ import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 export default function DashboardShell({ role, cards = [] }) {
   const navigate = useNavigate()
   const { profile, loading, isVerified: verified } = useAuth()
+  const { appName, logoUrl } = useBranding()
 
   const handleLogout = async () => {
     await logout()
@@ -29,7 +31,10 @@ export default function DashboardShell({ role, cards = [] }) {
       )}
 
       <nav style={glassNav}>
-        <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>MONTEMY</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>
+          {logoUrl && <img src={logoUrl} alt="" style={{ height: '1.8rem' }} />}
+          {appName}
+        </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           {profile?.name && <span style={{ color: 'rgba(255,255,255,0.8)' }}>{profile.name}</span>}
           <button onClick={handleLogout}
