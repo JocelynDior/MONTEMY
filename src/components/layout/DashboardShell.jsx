@@ -8,9 +8,10 @@ import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
 // Shared dashboard layout used by student, teacher, parent, principal,
 // tutor and school member dashboards.
-// Props: role (display label), cards [{ icon, title, description, path, requiresVerification }]
+// Props: role (display label), cards [{ icon, title, description, path, requiresVerification }],
+// children (optional content shown above the cards, e.g. live summary panels)
 // (the old `collection` prop is no longer needed and is ignored)
-export default function DashboardShell({ role, cards = [] }) {
+export default function DashboardShell({ role, cards = [], children }) {
   const navigate = useNavigate()
   const { profile, loading, isVerified: verified } = useAuth()
   const { appName, logoUrl } = useBranding()
@@ -59,6 +60,8 @@ export default function DashboardShell({ role, cards = [] }) {
                 ⏳ Your account is awaiting admin verification. Some features are locked.
               </div>
             )}
+
+            {children}
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.25rem', marginTop: '1.5rem' }}>
               {cards.map((card) => {
