@@ -1,93 +1,68 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../supabase/client'
+import TeacherPage from '../../components/teacher/TeacherPage'
+import { useApiData } from '../../hooks/useApiData'
+import { glassCard, glassBtn, C } from '../../styles/glass'
 
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)', lightNavy: 'var(--color-bg-light)', darkNavy: 'var(--color-bg-dark)' }
+const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
+const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
 
 export default function TeacherClasses() {
   const navigate = useNavigate()
-  const [classes, setClasses] = useState([])
-  const [teacher, setTeacher] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [activeClass, setActiveClass] = useState(null)
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async user => {
-      if (!user) return navigate('/')
-      try {
-        const snap = await getDoc(doc(db, 'teachers', user.uid))
-        if (snap.exists()) {
-          const d = snap.data()
-          setTeacher(d)
-          loadClasses(d)
-        }
-      } catch (err) { console.error(err) }
-    })
-    return () => unsub()
-  }, [])
-
-  const loadClasses = async (teacherData) => {
-    setLoading(true)
-    try {
-      const name = `${teacherData.title || ''} ${teacherData.lastName || teacherData.LastName || ''}`.trim()
-      const q = query(collection(db, 'classes'), where('teacher', '==', name))
-      const snap = await getDocs(q)
-      if (snap.empty) {
-        const allSnap = await getDocs(collection(db, 'classes'))
-        setClasses(allSnap.docs.map(d => ({ id: d.id, ...d.data() })))
-      } else {
-        setClasses(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-      }
-    } catch (err) { console.error(err) }
-    setLoading(false)
-  }
+  const { data, loading, error, reload } = useApiData('/api/teacher/classes')
+  const [open, setOpen] = useState(null)
 
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }}>
-      <nav style={{ background: s.turquoise, padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
-        <div style={{ color: s.navy, fontSize: '1.5rem', fontWeight: 'bold' }}>MONTEMY</div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => navigate('/teacher/dashboard')} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Dashboard</button>
-          <button onClick={async () => { await signOut(auth); navigate('/') }} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Logout</button>
+    <TeacherPage title="My Classes" icon="🏫">
+      {loading && <p style={muted}>Loading...</p>}
+
+      {error && (
+        <div style={{ ...panel, borderColor: 'rgba(255,80,80,0.4)' }}>
+          <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
+          <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
         </div>
-      </nav>
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-        <h2 style={{ color: s.turquoise, fontSize: '1.8rem', marginBottom: '1.5rem' }}>My Classes</h2>
-        {loading ? (
-          <div style={{ textAlign: 'center', color: s.turquoise, padding: '3rem' }}>Loading classes...</div>
-        ) : classes.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#ccc' }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🏫</div>
-            <p>No classes assigned yet.</p>
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
-            {classes.map(cls => (
-              <div key={cls.id} onClick={() => setActiveClass(activeClass?.id === cls.id ? null : cls)}
-                style={{ background: 'rgba(255,255,255,0.1)', padding: '1.5rem', borderRadius: '15px', borderLeft: `4px solid ${s.turquoise}`, cursor: 'pointer', transition: 'transform 0.3s' }}
-                onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-3px)'}
-                onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
-                <h3 style={{ color: s.turquoise, fontSize: '1.3rem', marginBottom: '0.5rem' }}>{cls.name}</h3>
-                <div style={{ color: '#ccc', fontSize: '0.9rem' }}>
-                  {cls.grade && <div>Grade: {cls.grade}</div>}
-                  {cls.school && <div>School: {cls.school}</div>}
-                  {cls.teacher && <div>Teacher: {cls.teacher}</div>}
-                </div>
-                {activeClass?.id === cls.id && (
-                  <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${s.turquoise}` }}>
-                    <p style={{ color: '#ccc', fontSize: '0.9rem' }}>Class ID: {cls.id}</p>
-                    <button onClick={(e) => { e.stopPropagation(); navigate('/teacher/assignments') }}
-                      style={{ marginTop: '0.5rem', background: s.turquoise, color: s.navy, border: 'none', borderRadius: '5px', padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 'bold' }}>
-                      View Assignments
-                    </button>
-                  </div>
-                )}
+      )}
+
+      {data && data.classes.length === 0 && (
+        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
+          You haven't been assigned any classes yet. Once your school admin assigns you a class it will show up here.
+        </div>
+      )}
+
+      {data && data.classes.map(c => {
+        const isOpen = open === c.id
+        return (
+          <div key={c.id} style={panel}>
+            <div onClick={() => setOpen(isOpen ? null : c.id)}
+              style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', cursor: 'pointer' }}>
+              <div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>{c.name}</div>
+                <div style={muted}>{[c.subject, c.grade ? `Grade ${c.grade}` : null].filter(Boolean).join(' · ') || 'No subject set'}</div>
               </div>
-            ))}
+              <div style={{ ...muted, textAlign: 'right' }}>
+                {c.students.length} student{c.students.length === 1 ? '' : 's'} {isOpen ? '▲' : '▼'}
+              </div>
+            </div>
+
+            {isOpen && (
+              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+                {c.students.length === 0 ? (
+                  <p style={muted}>No students have joined this class yet. Students choose their class from their dashboard.</p>
+                ) : c.students.map(s => (
+                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                    <span>{s.name}</span>
+                    <span style={{ ...muted, fontSize: '0.8rem', overflowWrap: 'anywhere' }}>{s.email}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+                  <button onClick={() => navigate('/teacher/assignments')} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSize: '0.9rem' }}>Assignments</button>
+                  <button onClick={() => navigate('/teacher/progress')} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSize: '0.9rem', background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }}>Progress</button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        )
+      })}
+    </TeacherPage>
   )
 }
