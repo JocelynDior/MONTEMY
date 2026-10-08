@@ -1,154 +1,277 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../supabase/client'
+import React, { useState } from 'react'
+import TeacherPage from '../../components/teacher/TeacherPage'
+import { useApiData } from '../../hooks/useApiData'
+import { apiFetch } from '../../api/apiClient'
+import { dueIn, fmtDate, gradeColor, statusColor } from '../../components/student/studentUtils'
+import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
 
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)', lightNavy: 'var(--color-bg-light)' }
+const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
+const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
+const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
+const ghostBtn = { ...glassBtn, width: 'auto', padding: '0.45rem 1rem', fontSize: '0.85rem', background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }
+const smallBtn = { ...glassBtn, width: 'auto', padding: '0.45rem 1rem', fontSize: '0.85rem' }
+const isLink = (u) => typeof u === 'string' && /^https?:\/\//i.test(u)
 
-export default function TeacherAssignments() {
-  const navigate = useNavigate()
-  const [assignments, setAssignments] = useState([])
-  const [classes, setClasses] = useState([])
-  const [teacher, setTeacher] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [deleteModal, setDeleteModal] = useState(null)
-  const [search, setSearch] = useState('')
-  const [form, setForm] = useState({ title: '', description: '', dueDate: '', className: '', subject: '', totalMarks: '' })
+// ISO date -> value for <input type="datetime-local">
+function toLocalInput(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d)) return ''
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async user => {
-      if (!user) return navigate('/')
-      try {
-        const snap = await getDoc(doc(db, 'teachers', user.uid))
-        if (snap.exists()) { setTeacher({ id: user.uid, ...snap.data() }); loadData(snap.data()) }
-      } catch (err) { console.error(err) }
-    })
-    return () => unsub()
-  }, [])
-
-  const loadData = async (teacherData) => {
-    setLoading(true)
-    try {
-      const name = `${teacherData.title || ''} ${teacherData.lastName || teacherData.LastName || ''}`.trim()
-      const [assignSnap, classSnap] = await Promise.all([
-        getDocs(query(collection(db, 'assignments'), where('teacherName', '==', name))),
-        getDocs(query(collection(db, 'classes'), where('teacher', '==', name)))
-      ])
-      setAssignments(assignSnap.docs.map(d => ({ id: d.id, ...d.data() })))
-      setClasses(classSnap.docs.map(d => ({ id: d.id, ...d.data() })))
-    } catch (err) { console.error(err) }
-    setLoading(false)
-  }
-
-  const createAssignment = async (e) => {
-    e.preventDefault()
-    if (!teacher) return
-    try {
-      const name = `${teacher.title || ''} ${teacher.lastName || teacher.LastName || ''}`.trim()
-      await addDoc(collection(db, 'assignments'), {
-        ...form, teacherName: name, teacherId: teacher.id,
-        schoolId: teacher.schoolId || teacher.schoolName || '',
-        createdAt: serverTimestamp(), submissions: []
-      })
-      setShowForm(false)
-      setForm({ title: '', description: '', dueDate: '', className: '', subject: '', totalMarks: '' })
-      loadData(teacher)
-    } catch (err) { alert('Error: ' + err.message) }
-  }
-
-  const deleteAssignment = async () => {
-    await deleteDoc(doc(db, 'assignments', deleteModal.id))
-    setDeleteModal(null); loadData(teacher)
-  }
-
-  const filtered = assignments.filter(a =>
-    a.title?.toLowerCase().includes(search.toLowerCase()) ||
-    a.className?.toLowerCase().includes(search.toLowerCase()) ||
-    a.subject?.toLowerCase().includes(search.toLowerCase())
+function ErrorBox({ children }) {
+  return (
+    <div style={{ background: 'rgba(255,80,80,0.15)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.7rem 1rem', marginBottom: '1rem', color: '#ffb3b3', fontSize: '0.9rem' }}>
+      {children}
+    </div>
   )
+}
+
+function AssignmentForm({ classes, assignment, onDone, onCancel }) {
+  const editing = !!assignment
+  const [classId, setClassId] = useState(assignment?.classId || classes[0]?.id || '')
+  const [title, setTitle] = useState(assignment?.title || '')
+  const [description, setDescription] = useState(assignment?.description || '')
+  const [due, setDue] = useState(toLocalInput(assignment?.dueDate))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const save = async (e) => {
+    e.preventDefault()
+    setError('')
+    setSaving(true)
+    try {
+      const body = { classId, title, description, dueDate: due ? new Date(due).toISOString() : null }
+      if (editing) await apiFetch(`/api/teacher/assignments/${assignment.id}`, { method: 'PUT', body })
+      else await apiFetch('/api/teacher/assignments', { method: 'POST', body })
+      onDone()
+    } catch (err) {
+      setError(err.message || 'Could not save. Please try again.')
+      setSaving(false)
+    }
+  }
 
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }}>
-      <nav style={{ background: s.turquoise, padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ color: s.navy, fontSize: '1.5rem', fontWeight: 'bold' }}>MONTEMY</div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => navigate('/teacher/dashboard')} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Dashboard</button>
-          <button onClick={async () => { await signOut(auth); navigate('/') }} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Logout</button>
-        </div>
-      </nav>
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ color: s.turquoise, fontSize: '1.8rem' }}>Assignments</h2>
-          <button onClick={() => setShowForm(true)} style={{ background: s.turquoise, color: s.navy, padding: '0.8rem 1.5rem', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>+ Create Assignment</button>
-        </div>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search assignments..."
-          style={{ width: '100%', padding: '0.8rem', border: `2px solid ${s.turquoise}`, borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '1rem', marginBottom: '1.5rem' }} />
-        {loading ? <div style={{ textAlign: 'center', color: s.turquoise, padding: '3rem' }}>Loading...</div>
-          : filtered.length === 0 ? <div style={{ textAlign: 'center', color: '#ccc', padding: '3rem' }}>No assignments yet.</div>
-          : filtered.map(a => (
-            <div key={a.id} style={{ background: 'rgba(255,255,255,0.1)', padding: '1.5rem', borderRadius: '10px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ color: s.turquoise, fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>{a.title}</div>
-                  <div style={{ color: '#ccc', fontSize: '0.9rem' }}>
-                    {a.className && <span>Class: {a.className} &nbsp;|&nbsp; </span>}
-                    {a.subject && <span>Subject: {a.subject} &nbsp;|&nbsp; </span>}
-                    {a.dueDate && <span>Due: {a.dueDate}</span>}
-                  </div>
-                  {a.description && <p style={{ color: '#aaa', marginTop: '0.5rem', fontSize: '0.9rem' }}>{a.description}</p>}
-                </div>
-                <button onClick={() => setDeleteModal(a)} style={{ background: '#e74c3c', color: 'white', padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.8rem' }}>Delete</button>
-              </div>
-            </div>
-          ))}
+    <form onSubmit={save} style={panel}>
+      <h3 style={{ color: C.turquoise, marginBottom: '1rem' }}>{editing ? 'Edit assignment' : 'New assignment'}</h3>
+      {error && <ErrorBox>{error}</ErrorBox>}
+
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={labelStyle}>Class</label>
+        <select style={glassInput} value={classId} onChange={e => setClassId(e.target.value)} disabled={editing} required>
+          {classes.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}{c.subject ? ` · ${c.subject}` : ''}</option>)}
+        </select>
       </div>
 
-      {showForm && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-          <div style={{ background: s.navy, padding: '2rem', borderRadius: '15px', border: `2px solid ${s.turquoise}`, maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
-            <h3 style={{ color: s.turquoise, marginBottom: '1.5rem' }}>Create Assignment</h3>
-            <form onSubmit={createAssignment}>
-              {[['Title', 'title', 'text'], ['Subject', 'subject', 'text'], ['Due Date', 'dueDate', 'date'], ['Total Marks', 'totalMarks', 'number']].map(([label, key, type]) => (
-                <div key={key} style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', color: s.turquoise, marginBottom: '0.5rem', fontWeight: 'bold' }}>{label}</label>
-                  <input type={type} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} required={key !== 'totalMarks'}
-                    style={{ width: '100%', padding: '0.8rem', border: `1px solid ${s.turquoise}`, borderRadius: '5px', background: 'rgba(255,255,255,0.1)', color: 'white' }} />
-                </div>
-              ))}
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', color: s.turquoise, marginBottom: '0.5rem', fontWeight: 'bold' }}>Class</label>
-                <select value={form.className} onChange={e => setForm({ ...form, className: e.target.value })} required
-                  style={{ width: '100%', padding: '0.8rem', border: `1px solid ${s.turquoise}`, borderRadius: '5px', background: s.navy, color: 'white' }}>
-                  <option value="">Select Class</option>
-                  {classes.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                </select>
-              </div>
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ display: 'block', color: s.turquoise, marginBottom: '0.5rem', fontWeight: 'bold' }}>Description</label>
-                <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-                  style={{ width: '100%', padding: '0.8rem', border: `1px solid ${s.turquoise}`, borderRadius: '5px', background: 'rgba(255,255,255,0.1)', color: 'white', minHeight: '80px', resize: 'vertical' }} />
-              </div>
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <button type="submit" style={{ background: s.turquoise, color: s.navy, padding: '0.8rem 1.5rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', flex: 1 }}>Create</button>
-                <button type="button" onClick={() => setShowForm(false)} style={{ background: '#666', color: 'white', padding: '0.8rem 1.5rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', flex: 1 }}>Cancel</button>
-              </div>
-            </form>
-          </div>
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={labelStyle}>Title</label>
+        <input style={glassInput} value={title} onChange={e => setTitle(e.target.value)} maxLength={150} required placeholder="e.g. Fractions worksheet" />
+      </div>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={labelStyle}>Instructions</label>
+        <textarea style={{ ...glassInput, minHeight: '110px', resize: 'vertical' }} value={description}
+          onChange={e => setDescription(e.target.value)} maxLength={5000} placeholder="What should students do?" />
+      </div>
+
+      <div style={{ marginBottom: '1.25rem' }}>
+        <label style={labelStyle}>Due date</label>
+        <input style={glassInput} type="datetime-local" value={due} onChange={e => setDue(e.target.value)} />
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <button type="submit" disabled={saving} style={{ ...glassBtn, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Create assignment'}</button>
+        <button type="button" onClick={onCancel} style={{ ...glassBtn, background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }}>Cancel</button>
+      </div>
+    </form>
+  )
+}
+
+function SubmissionRow({ row, assignmentId, onSaved }) {
+  const sub = row.submission
+  const [grade, setGrade] = useState(sub?.grade ?? '')
+  const [feedback, setFeedback] = useState(sub?.feedback || '')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState(null) // { ok, text }
+
+  const status = !sub ? 'Not submitted' : sub.grade !== null ? 'Graded' : 'Submitted'
+
+  const save = async () => {
+    setMsg(null)
+    setSaving(true)
+    try {
+      await apiFetch(`/api/teacher/assignments/${assignmentId}/grade`, {
+        method: 'PUT', body: { studentId: row.student.id, grade, feedback },
+      })
+      setMsg({ ok: true, text: 'Saved' })
+      onSaved()
+    } catch (err) {
+      setMsg({ ok: false, text: err.message || 'Could not save.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={panel}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>{row.student.name}</div>
+          <div style={{ ...muted, fontSize: '0.8rem' }}>{sub ? `Submitted ${fmtDate(sub.submittedAt)}` : 'Nothing handed in yet'}</div>
+        </div>
+        <span style={{ color: statusColor(status), fontWeight: 700 }}>{status}</span>
+      </div>
+
+      {sub?.content && (
+        <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>
+          {sub.content}
+        </div>
+      )}
+      {isLink(sub?.fileUrl) && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <a href={sub.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.turquoise, fontWeight: 600 }}>Open attached file</a>
         </div>
       )}
 
-      {deleteModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-          <div style={{ background: s.navy, padding: '2rem', borderRadius: '15px', border: `2px solid ${s.turquoise}`, maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-            <h3 style={{ color: s.turquoise, marginBottom: '1rem' }}>Delete Assignment</h3>
-            <p style={{ color: '#ccc', marginBottom: '2rem' }}>Delete "{deleteModal.title}"?</p>
-            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-              <button onClick={deleteAssignment} style={{ background: '#e74c3c', color: 'white', padding: '0.7rem 1.5rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Delete</button>
-              <button onClick={() => setDeleteModal(null)} style={{ background: '#666', color: 'white', padding: '0.7rem 1.5rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Cancel</button>
-            </div>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ width: '110px' }}>
+          <label style={{ ...labelStyle, marginBottom: '0.3rem' }}>Grade (0-100)</label>
+          <input style={{ ...glassInput, padding: '0.6rem 0.8rem' }} type="number" min="0" max="100" step="0.1"
+            value={grade} onChange={e => setGrade(e.target.value)} />
+        </div>
+        <div style={{ flex: 1, minWidth: '180px' }}>
+          <label style={{ ...labelStyle, marginBottom: '0.3rem' }}>Feedback</label>
+          <input style={{ ...glassInput, padding: '0.6rem 0.8rem' }} value={feedback} maxLength={2000}
+            onChange={e => setFeedback(e.target.value)} placeholder="Optional comment for the student" />
+        </div>
+        <button onClick={save} disabled={saving || grade === ''} style={{ ...smallBtn, opacity: saving || grade === '' ? 0.5 : 1 }}>
+          {saving ? 'Saving...' : 'Save grade'}
+        </button>
+      </div>
+      {msg && <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: msg.ok ? '#7CFC9A' : '#ffb3b3' }}>{msg.text}</div>}
+    </div>
+  )
+}
+
+function SubmissionsPanel({ assignmentId, onBack }) {
+  const { data, loading, error, reload } = useApiData(`/api/teacher/assignments/${assignmentId}/submissions`)
+
+  return (
+    <>
+      <button onClick={onBack} style={{ ...ghostBtn, marginBottom: '1rem' }}>← Back to assignments</button>
+      {loading && <p style={muted}>Loading...</p>}
+      {error && <ErrorBox>{error}</ErrorBox>}
+      {data && (
+        <>
+          <div style={panel}>
+            <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{data.assignment.title}</div>
+            <div style={muted}>{data.assignment.className}{data.assignment.dueDate ? ` · Due ${fmtDate(data.assignment.dueDate)}` : ''}</div>
+            {data.assignment.description && (
+              <div style={{ marginTop: '0.75rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{data.assignment.description}</div>
+            )}
           </div>
+          {data.rows.length === 0
+            ? <div style={{ ...panel, ...muted, textAlign: 'center' }}>No students are in this class yet.</div>
+            : data.rows.map(row => (
+                <SubmissionRow key={row.student.id} row={row} assignmentId={assignmentId} onSaved={reload} />
+              ))}
+        </>
+      )}
+    </>
+  )
+}
+
+export default function TeacherAssignments() {
+  const list = useApiData('/api/teacher/assignments')
+  const classes = useApiData('/api/teacher/classes')
+  const [form, setForm] = useState(null)      // null | 'new' | assignment being edited
+  const [viewing, setViewing] = useState(null) // assignment id whose submissions are open
+  const [filter, setFilter] = useState('')
+  const [actionError, setActionError] = useState('')
+
+  const classList = classes.data?.classes || []
+
+  const remove = async (a) => {
+    if (!window.confirm(`Delete "${a.title}"? This can't be undone.`)) return
+    setActionError('')
+    try {
+      await apiFetch(`/api/teacher/assignments/${a.id}`, { method: 'DELETE' })
+      list.reload()
+    } catch (err) {
+      setActionError(err.message || 'Could not delete the assignment.')
+    }
+  }
+
+  if (viewing) {
+    return (
+      <TeacherPage title="Submissions" icon="📝">
+        <SubmissionsPanel assignmentId={viewing} onBack={() => { setViewing(null); list.reload() }} />
+      </TeacherPage>
+    )
+  }
+
+  const shown = (list.data?.assignments || []).filter(a => !filter || a.classId === filter)
+
+  return (
+    <TeacherPage title="Assignments" icon="📝">
+      {(list.loading || classes.loading) && <p style={muted}>Loading...</p>}
+      {list.error && <ErrorBox>{list.error}</ErrorBox>}
+      {actionError && <ErrorBox>{actionError}</ErrorBox>}
+
+      {!classes.loading && classes.data && classList.length === 0 && (
+        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
+          You need a class before you can set assignments. Once your school admin assigns you a class, you can create work for it here.
         </div>
       )}
-    </div>
+
+      {form && (
+        <AssignmentForm
+          classes={classList}
+          assignment={form === 'new' ? null : form}
+          onCancel={() => setForm(null)}
+          onDone={() => { setForm(null); list.reload() }}
+        />
+      )}
+
+      {!form && classList.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.25rem', alignItems: 'center' }}>
+          <button onClick={() => setForm('new')} style={{ ...glassBtn, width: 'auto', padding: '0.6rem 1.4rem' }}>+ New assignment</button>
+          {classList.length > 1 && (
+            <select style={{ ...glassInput, width: 'auto', minWidth: '180px' }} value={filter} onChange={e => setFilter(e.target.value)}>
+              <option value="" style={{ background: '#001F3F' }}>All classes</option>
+              {classList.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+
+      {list.data && classList.length > 0 && shown.length === 0 && !form && (
+        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>No assignments yet. Create your first one above.</div>
+      )}
+
+      {!form && shown.map(a => (
+        <div key={a.id} style={panel}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>{a.title}</div>
+              <div style={{ ...muted, fontSize: '0.85rem' }}>
+                {a.className} · {a.dueDate ? `${fmtDate(a.dueDate)} · ${dueIn(a.dueDate)}` : 'No due date'}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', fontSize: '0.85rem' }}>
+              <div style={muted}>{a.submitted} of {a.studentCount} submitted</div>
+              <div style={{ color: a.graded === a.submitted && a.submitted > 0 ? gradeColor(100) : 'rgba(255,255,255,0.6)' }}>{a.graded} graded</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.9rem', flexWrap: 'wrap' }}>
+            <button onClick={() => setViewing(a.id)} style={smallBtn}>Submissions & grading</button>
+            <button onClick={() => setForm(a)} style={ghostBtn}>Edit</button>
+            <button onClick={() => remove(a)} style={{ ...ghostBtn, color: '#ffb3b3' }}>Delete</button>
+          </div>
+        </div>
+      ))}
+    </TeacherPage>
   )
 }
