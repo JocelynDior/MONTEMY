@@ -37,7 +37,7 @@ export default function TeacherProgress() {
 
       {classes.data && classList.length === 0 && (
         <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
-          You haven't been assigned any classes yet, so there's no progress to show.
+          You haven't added any classes yet. Add one in My Classes to see progress here.
         </div>
       )}
 
@@ -46,7 +46,7 @@ export default function TeacherProgress() {
           <div style={{ minWidth: '200px', flex: 1 }}>
             <label style={labelStyle}>Class</label>
             <select style={glassInput} value={classId} onChange={e => setClassId(e.target.value)}>
-              {classList.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}{c.subject ? ` · ${c.subject}` : ''}</option>)}
+              {classList.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}</option>)}
             </select>
           </div>
           <div style={{ width: '170px' }}>
