@@ -1,45 +1,39 @@
-export function fmtDate(iso, withTime = true) {
-  if (!iso) return 'No date'
-  const d = new Date(iso)
-  if (isNaN(d)) return 'No date'
-  const day = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
-  if (!withTime) return day
-  return `${day}, ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
-}
+import React from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useBranding } from '../../context/BrandingContext'
+import { BACKGROUND_VIDEO } from '../../config/media'
+import { glassNav, glassBtn, C } from '../../styles/glass'
 
-export function dueIn(iso) {
-  if (!iso) return ''
-  const diff = new Date(iso).getTime() - Date.now()
-  const days = Math.floor(Math.abs(diff) / 86400000)
-  const hours = Math.floor(Math.abs(diff) / 3600000)
-  const plural = (n) => (n === 1 ? '' : 's')
-  if (diff < 0) return days >= 1 ? `Overdue by ${days} day${plural(days)}` : 'Overdue'
-  if (days >= 1) return `Due in ${days} day${plural(days)}`
-  return hours >= 1 ? `Due in ${hours}h` : 'Due soon'
-}
+// Page frame for student sub-pages: background, branded navbar, title
+export default function StudentPage({ title, icon, children, maxWidth = 960 }) {
+  const navigate = useNavigate()
+  const { appName, logoUrl } = useBranding()
 
-const STATUS_COLORS = {
-  Graded: '#7CFC9A',
-  Submitted: '#8fd3ff',
-  Late: '#ffb36b',
-  Overdue: '#ff8f8f',
-  'Not submitted': '#ffe08a',
-}
-export const statusColor = (status) => STATUS_COLORS[status] || '#cfd8e3'
+  return (
+    <div style={{ minHeight: '100vh', position: 'relative', color: 'white' }}>
+      {BACKGROUND_VIDEO ? (
+        <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
+          <source src={BACKGROUND_VIDEO} type="video/mp4" />
+        </video>
+      ) : (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
+      )}
 
-// Assumes grades are out of 100
-export function gradeColor(g) {
-  if (g >= 70) return '#7CFC9A'
-  if (g >= 50) return '#ffe08a'
-  return '#ff8f8f'
-}
+      <nav style={glassNav}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>
+          {logoUrl && <img src={logoUrl} alt="" style={{ height: '1.8rem' }} />}
+          {appName}
+        </span>
+        <button onClick={() => navigate('/student/dashboard')}
+          style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem', margin: 0 }}>
+          Dashboard
+        </button>
+      </nav>
 
-export const norm = (v) => String(v ?? '').replace(/\D/g, '')
-
-export function sortByDue(list) {
-  return [...list].sort((a, b) => {
-    if (!a.dueDate) return 1
-    if (!b.dueDate) return -1
-    return new Date(a.dueDate) - new Date(b.dueDate)
-  })
+      <div style={{ maxWidth, margin: '0 auto', padding: '2rem 1.5rem' }}>
+        <h2 style={{ color: C.turquoise, fontSize: '1.8rem', marginBottom: '1.25rem' }}>{icon} {title}</h2>
+        {children}
+      </div>
+    </div>
+  )
 }
