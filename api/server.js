@@ -435,11 +435,10 @@ app.get('/api/student/overview', verifyToken, studentLimiter, async (req, res) =
       assignments = data || []
     }
 
-    // submissions.student_id may reference users.id or students.id, so accept either
-    const ownerIds = [...new Set([user.id, student?.id].filter(Boolean))]
+    // submissions.student_id references users.id
     const { data: subRows } = await supabase
       .from('submissions').select('id, assignment_id, grade, feedback, status, submitted_at')
-      .in('student_id', ownerIds)
+      .eq('student_id', user.id)
 
     // Keep only the latest submission per assignment
     const latest = {}
@@ -583,6 +582,394 @@ app.get('/api/student/resources', verifyToken, studentLimiter, async (req, res) 
   } catch (err) {
     console.error('Student resources error:', err)
     res.status(500).json({ error: 'Could not load resources.' })
+  }
+})
+
+// ---------- Teacher routes (Phase 10) ----------
+// A teacher's classes are the rows in `classes` where teacher_id is their own user id.
+// Every route below checks that the class/assignment belongs to the signed-in teacher.
+const teacherLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+async function loadTeacher(authUser) {
+  const { data: user } = await supabase
+    .from('users').select('id, name, role, org_id, is_verified').eq('id', authUser.id).maybeSingle()
+  if (!user || user.role !== 'teacher') return null
+  return user
+}
+
+// Unverified accounts can look around but not change anything
+function requireVerified(user, res) {
+  if (user.is_verified) return true
+  res.status(403).json({ error: 'Your account needs to be verified by an admin before you can do this.' })
+  return false
+}
+
+async function getTeacherClasses(userId) {
+  const { data } = await supabase
+    .from('classes').select('id, name, subject, grade').eq('teacher_id', userId).order('name')
+  return data || []
+}
+
+// { classId: [{ id, name, email }] } built from students.class_id
+async function studentsByClass(classIds) {
+  const result = Object.fromEntries(classIds.map(id => [id, []]))
+  if (!classIds.length) return result
+
+  const { data: rows } = await supabase.from('students').select('user_id, class_id').in('class_id', classIds)
+  const userIds = (rows || []).map(r => r.user_id).filter(Boolean)
+  const people = {}
+  if (userIds.length) {
+    const { data: users } = await supabase.from('users').select('id, name, email').in('id', userIds)
+    for (const u of users || []) people[u.id] = u
+  }
+  for (const r of rows || []) {
+    const u = people[r.user_id]
+    if (u) result[r.class_id].push({ id: u.id, name: u.name || u.email, email: u.email })
+  }
+  for (const id of classIds) result[id].sort((a, b) => String(a.name).localeCompare(String(b.name)))
+  return result
+}
+
+// The assignment plus its class, only if the class is taught by this teacher
+async function getOwnedAssignment(userId, assignmentId) {
+  const { data: assignment } = await supabase
+    .from('assignments').select('id, class_id, title, description, due_date').eq('id', assignmentId).maybeSingle()
+  if (!assignment) return null
+  const { data: cls } = await supabase
+    .from('classes').select('id, name, teacher_id').eq('id', assignment.class_id).maybeSingle()
+  if (!cls || cls.teacher_id !== userId) return null
+  return { assignment, cls }
+}
+
+const hasNumericGrade = (s) => s && s.grade !== null && s.grade !== undefined && !Number.isNaN(Number(s.grade))
+
+// { assignmentId: { submitted, graded } }, counting only students currently in that class
+async function submissionStats(assignments, roster) {
+  const stats = Object.fromEntries(assignments.map(a => [a.id, { submitted: 0, graded: 0 }]))
+  if (!assignments.length) return stats
+  const { data: subs } = await supabase
+    .from('submissions').select('assignment_id, student_id, grade').in('assignment_id', assignments.map(a => a.id))
+  const classOf = Object.fromEntries(assignments.map(a => [a.id, a.class_id]))
+  for (const sub of subs || []) {
+    const inClass = (roster[classOf[sub.assignment_id]] || []).some(st => st.id === sub.student_id)
+    if (!inClass) continue
+    stats[sub.assignment_id].submitted += 1
+    if (hasNumericGrade(sub)) stats[sub.assignment_id].graded += 1
+  }
+  return stats
+}
+
+function cleanAssignmentInput(body) {
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  if (!title) return { error: 'Please give the assignment a title.' }
+  if (title.length > 150) return { error: 'The title is too long (max 150 characters).' }
+  const description = typeof body.description === 'string' ? body.description.trim() : ''
+  if (description.length > 5000) return { error: 'The description is too long (max 5000 characters).' }
+  let dueDate = null
+  if (body.dueDate) {
+    const d = new Date(body.dueDate)
+    if (Number.isNaN(d.getTime())) return { error: 'That due date is not valid.' }
+    dueDate = d.toISOString()
+  }
+  return { title, description, dueDate }
+}
+
+// Dashboard summary
+app.get('/api/teacher/overview', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+
+    const classes = await getTeacherClasses(user.id)
+    const classIds = classes.map(c => c.id)
+    const roster = await studentsByClass(classIds)
+
+    let assignments = []
+    if (classIds.length) {
+      const { data } = await supabase
+        .from('assignments').select('id, class_id, title, due_date').in('class_id', classIds)
+        .order('due_date', { ascending: true })
+      assignments = data || []
+    }
+    const stats = await submissionStats(assignments, roster)
+    const className = Object.fromEntries(classes.map(c => [c.id, c.name]))
+
+    const now = Date.now()
+    const upcoming = assignments
+      .filter(a => a.due_date && new Date(a.due_date).getTime() >= now)
+      .slice(0, 5)
+      .map(a => ({
+        id: a.id, title: a.title, className: className[a.class_id], dueDate: a.due_date,
+        studentCount: roster[a.class_id].length, ...stats[a.id],
+      }))
+
+    const toGrade = assignments.reduce((t, a) => t + Math.max(0, stats[a.id].submitted - stats[a.id].graded), 0)
+
+    res.json({
+      name: user.name,
+      isVerified: !!user.is_verified,
+      classes: classes.map(c => ({ ...c, studentCount: roster[c.id].length })),
+      totals: {
+        classes: classes.length,
+        students: classIds.reduce((t, id) => t + roster[id].length, 0),
+        toGrade,
+      },
+      upcoming,
+    })
+  } catch (err) {
+    console.error('Teacher overview error:', err)
+    res.status(500).json({ error: 'Could not load your dashboard. Please try again.' })
+  }
+})
+
+// Classes with their enrolled students
+app.get('/api/teacher/classes', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    const classes = await getTeacherClasses(user.id)
+    const roster = await studentsByClass(classes.map(c => c.id))
+    res.json({ classes: classes.map(c => ({ ...c, students: roster[c.id] })) })
+  } catch (err) {
+    console.error('Teacher classes error:', err)
+    res.status(500).json({ error: 'Could not load your classes.' })
+  }
+})
+
+// All assignments across the teacher's classes
+app.get('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+
+    const classes = await getTeacherClasses(user.id)
+    const classIds = classes.map(c => c.id)
+    if (!classIds.length) return res.json({ assignments: [] })
+
+    const roster = await studentsByClass(classIds)
+    const { data } = await supabase
+      .from('assignments').select('id, class_id, title, description, due_date').in('class_id', classIds)
+    const assignments = data || []
+    const stats = await submissionStats(assignments, roster)
+    const className = Object.fromEntries(classes.map(c => [c.id, c.name]))
+
+    const list = assignments.map(a => ({
+      id: a.id, classId: a.class_id, className: className[a.class_id],
+      title: a.title, description: a.description || '', dueDate: a.due_date,
+      studentCount: roster[a.class_id].length, ...stats[a.id],
+    })).sort((a, b) => {
+      if (!a.dueDate) return 1
+      if (!b.dueDate) return -1
+      return new Date(b.dueDate) - new Date(a.dueDate)
+    })
+    res.json({ assignments: list })
+  } catch (err) {
+    console.error('Teacher assignments error:', err)
+    res.status(500).json({ error: 'Could not load assignments.' })
+  }
+})
+
+app.post('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+
+    const input = cleanAssignmentInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+
+    const { data: cls } = await supabase
+      .from('classes').select('id, teacher_id').eq('id', req.body.classId).maybeSingle()
+    if (!cls || cls.teacher_id !== user.id) {
+      return res.status(400).json({ error: 'Please choose one of your own classes.' })
+    }
+
+    const { data, error } = await supabase.from('assignments').insert({
+      class_id: cls.id, title: input.title, description: input.description,
+      due_date: input.dueDate, created_by: user.id,
+    }).select('id').single()
+    if (error) throw error
+    res.json({ success: true, id: data.id })
+  } catch (err) {
+    console.error('Create assignment error:', err)
+    res.status(500).json({ error: 'Could not create the assignment. Please try again.' })
+  }
+})
+
+app.put('/api/teacher/assignments/:id', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+
+    const owned = await getOwnedAssignment(user.id, req.params.id)
+    if (!owned) return res.status(404).json({ error: 'Assignment not found.' })
+
+    const input = cleanAssignmentInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+
+    const { error } = await supabase.from('assignments')
+      .update({ title: input.title, description: input.description, due_date: input.dueDate })
+      .eq('id', owned.assignment.id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Update assignment error:', err)
+    res.status(500).json({ error: 'Could not save your changes. Please try again.' })
+  }
+})
+
+// Assignments that already have submissions can't be deleted (protects students' work and grades)
+app.delete('/api/teacher/assignments/:id', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+
+    const owned = await getOwnedAssignment(user.id, req.params.id)
+    if (!owned) return res.status(404).json({ error: 'Assignment not found.' })
+
+    const { data: subs } = await supabase.from('submissions').select('id').eq('assignment_id', owned.assignment.id).limit(1)
+    if ((subs || []).length) {
+      return res.status(409).json({ error: 'This assignment already has student submissions, so it can\'t be deleted.' })
+    }
+
+    const { error } = await supabase.from('assignments').delete().eq('id', owned.assignment.id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Delete assignment error:', err)
+    res.status(500).json({ error: 'Could not delete the assignment. Please try again.' })
+  }
+})
+
+// Every student in the class, with their submission (if any) for this assignment
+app.get('/api/teacher/assignments/:id/submissions', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+
+    const owned = await getOwnedAssignment(user.id, req.params.id)
+    if (!owned) return res.status(404).json({ error: 'Assignment not found.' })
+
+    const roster = (await studentsByClass([owned.cls.id]))[owned.cls.id]
+    const { data: subs } = await supabase
+      .from('submissions').select('id, student_id, content, file_url, grade, feedback, status, submitted_at')
+      .eq('assignment_id', owned.assignment.id)
+    const byStudent = Object.fromEntries((subs || []).map(s => [s.student_id, s]))
+
+    res.json({
+      assignment: {
+        id: owned.assignment.id, title: owned.assignment.title,
+        description: owned.assignment.description || '', dueDate: owned.assignment.due_date,
+        className: owned.cls.name,
+      },
+      rows: roster.map(student => {
+        const sub = byStudent[student.id]
+        return {
+          student,
+          submission: sub ? {
+            id: sub.id, content: sub.content || '', fileUrl: sub.file_url || null,
+            grade: hasNumericGrade(sub) ? Number(sub.grade) : null,
+            feedback: sub.feedback || '', status: sub.status || 'submitted', submittedAt: sub.submitted_at,
+          } : null,
+        }
+      }),
+    })
+  } catch (err) {
+    console.error('Teacher submissions error:', err)
+    res.status(500).json({ error: 'Could not load submissions.' })
+  }
+})
+
+// Grade a student's work. If they have no submission yet (e.g. paper homework) one is created.
+app.put('/api/teacher/assignments/:id/grade', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+
+    const owned = await getOwnedAssignment(user.id, req.params.id)
+    if (!owned) return res.status(404).json({ error: 'Assignment not found.' })
+
+    const { studentId, grade, feedback } = req.body || {}
+    const roster = (await studentsByClass([owned.cls.id]))[owned.cls.id]
+    if (!roster.some(s => s.id === studentId)) {
+      return res.status(400).json({ error: 'That student is not in this class.' })
+    }
+
+    const g = typeof grade === 'string' && grade.trim() === '' ? NaN : Number(grade)
+    if (!Number.isFinite(g) || g < 0 || g > 100) {
+      return res.status(400).json({ error: 'Enter a grade between 0 and 100.' })
+    }
+    const note = typeof feedback === 'string' ? feedback.trim().slice(0, 2000) : ''
+
+    const { data: existing } = await supabase
+      .from('submissions').select('id').eq('assignment_id', owned.assignment.id).eq('student_id', studentId).maybeSingle()
+
+    const write = (extra) => existing
+      ? supabase.from('submissions').update({ grade: g, feedback: note || null, ...extra }).eq('id', existing.id)
+      : supabase.from('submissions').insert({
+          assignment_id: owned.assignment.id, student_id: studentId, grade: g, feedback: note || null,
+          submitted_at: new Date().toISOString(), ...extra,
+        })
+
+    let { error } = await write({ status: 'graded' })
+    // If the status column only allows certain values, save the grade without it
+    if (error && error.code === '23514') ({ error } = await write({}))
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Grade error:', err)
+    res.status(500).json({ error: 'Could not save the grade. Please try again.' })
+  }
+})
+
+// Per-student grade overview for one class
+app.get('/api/teacher/progress', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+
+    const { data: cls } = await supabase
+      .from('classes').select('id, name, teacher_id').eq('id', req.query.classId).maybeSingle()
+    if (!cls || cls.teacher_id !== user.id) return res.status(404).json({ error: 'Class not found.' })
+
+    const roster = (await studentsByClass([cls.id]))[cls.id]
+    const { data: assignments } = await supabase.from('assignments').select('id').eq('class_id', cls.id)
+    const assignmentIds = (assignments || []).map(a => a.id)
+
+    let subs = []
+    if (assignmentIds.length) {
+      const { data } = await supabase
+        .from('submissions').select('assignment_id, student_id, grade').in('assignment_id', assignmentIds)
+      subs = data || []
+    }
+
+    const students = roster.map(st => {
+      const mine = subs.filter(s => s.student_id === st.id)
+      const grades = mine.filter(hasNumericGrade).map(s => Number(s.grade))
+      return {
+        id: st.id, name: st.name,
+        submitted: mine.length, graded: grades.length,
+        average: grades.length ? Math.round((grades.reduce((t, x) => t + x, 0) / grades.length) * 10) / 10 : null,
+      }
+    })
+    const averages = students.map(s => s.average).filter(a => a !== null)
+    res.json({
+      class: { id: cls.id, name: cls.name },
+      assignmentCount: assignmentIds.length,
+      classAverage: averages.length ? Math.round((averages.reduce((t, x) => t + x, 0) / averages.length) * 10) / 10 : null,
+      students,
+    })
+  } catch (err) {
+    console.error('Teacher progress error:', err)
+    res.status(500).json({ error: 'Could not load progress.' })
   }
 })
 
