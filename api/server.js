@@ -4,7 +4,7 @@ const cors = require('cors')
 const rateLimit = require('express-rate-limit')
 const crypto = require('crypto')
 const { createClient } = require('@supabase/supabase-js')
-const { GoogleGenerativeAI } = require('@google/generative-ai')
+const { GoogleGenAI } = require('@google/genai')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -17,7 +17,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+// Model name lives in an env var so a future Google retirement is a dashboard change, not a code change
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
 app.use(express.json())
 app.use(cors({
@@ -29,10 +31,12 @@ app.use(cors({
   credentials: true,
 }))
 
+// Keyed by user id (verifyToken runs first), so one student can't burn the quota for a whole school behind one IP
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
-  message: { error: 'Too many requests, slow down.' },
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'You are sending messages too quickly. Wait a moment and try again.' },
 })
 
 const adminRegisterLimiter = rateLimit({
@@ -277,35 +281,113 @@ app.post('/api/auth/register-later', registerLimiter, async (req, res) => {
   res.json({ success: true })
 })
 
+// Student's own grade + subjects, read server-side so the client can never spoof them
+async function getStudentContext(userId) {
+  const { data: user } = await supabase
+    .from('users').select('role, name').eq('id', userId).maybeSingle()
+  if (!user || user.role !== 'student') return null
+  const { data: student } = await supabase
+    .from('students').select('grade, subjects').eq('user_id', userId).maybeSingle()
+  return {
+    name: user.name || null,
+    grade: student?.grade ?? null,
+    subjects: Array.isArray(student?.subjects) ? student.subjects : [],
+  }
+}
+
+// Used by the AI Tutor page header
+app.get('/api/student/context', verifyToken, async (req, res) => {
+  try {
+    const ctx = await getStudentContext(req.user.id)
+    if (!ctx) return res.status(403).json({ error: 'Students only' })
+    res.json(ctx)
+  } catch (err) {
+    console.error('Student context error:', err)
+    res.status(500).json({ error: 'Could not load your profile' })
+  }
+})
+
+const MAX_MESSAGE_CHARS = 2000
+const MAX_HISTORY_MESSAGES = 20
+
+function buildSystemPrompt({ name, grade, subjects }) {
+  return `You are a friendly, patient school tutor on the Montemy education platform.
+${name ? `The student's first name is ${String(name).split(' ')[0]}. ` : ''}They are in grade ${grade ?? 'unknown'}.
+Their subjects are: ${subjects.length ? subjects.join(', ') : 'general school subjects'}.
+
+How you teach:
+- Never hand over finished homework answers. Guide the student with hints, questions and worked examples of similar problems, and let them take the final step.
+- If the student is stuck, break the problem into small steps and check their understanding as you go.
+- Keep explanations clear, encouraging and suited to their grade level. Keep replies short unless a longer explanation is truly needed.
+- Stay on school learning. If asked about something unrelated, gently steer back to their studies.
+- If a student seems upset or unsafe, be kind and encourage them to talk to a parent, teacher or another trusted adult.
+- Write in plain text. Do not use markdown symbols such as ** or #. Short paragraphs and simple numbered steps are fine.`
+}
+
+// Streams the tutor's reply back as plain text chunks
 app.post('/api/ai-tutor', verifyToken, aiLimiter, async (req, res) => {
-  const { message, history, studentGrade, studentSubjects } = req.body
-  if (!message) {
+  const { message, history } = req.body || {}
+  if (typeof message !== 'string' || !message.trim()) {
     return res.status(400).json({ error: 'Message is required' })
   }
+  if (message.length > MAX_MESSAGE_CHARS) {
+    return res.status(400).json({ error: `Message is too long (max ${MAX_MESSAGE_CHARS} characters)` })
+  }
+
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
-    const systemPrompt = `You are a helpful, friendly school tutor on the Montemy education platform. 
-You are helping a student in grade ${studentGrade || 'unknown'}.
-Their subjects are: ${studentSubjects?.join(', ') || 'general subjects'}.
-Keep explanations clear, encouraging, and age-appropriate.
-Never do homework for the student — guide them to the answer instead.`
-    const chat = model.startChat({
-      history: [
-        { role: 'user', parts: [{ text: systemPrompt }] },
-        { role: 'model', parts: [{ text: 'Understood! I am ready to help the student learn.' }] },
-        ...(history || []).map(msg => ({
-          role: msg.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: msg.content }],
-        })),
-      ],
+    const ctx = await getStudentContext(req.user.id)
+    if (!ctx) return res.status(403).json({ error: 'The AI Tutor is for student accounts only' })
+
+    // Clean the client-supplied history: valid roles/strings only, most recent N, must start with a user turn
+    let past = (Array.isArray(history) ? history : [])
+      .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+      .slice(-MAX_HISTORY_MESSAGES)
+      .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content.slice(0, 4000) }] }))
+    while (past.length && past[0].role !== 'user') past.shift()
+
+    const stream = await ai.models.generateContentStream({
+      model: GEMINI_MODEL,
+      contents: [...past, { role: 'user', parts: [{ text: message.trim() }] }],
+      config: {
+        systemInstruction: buildSystemPrompt(ctx),
+        maxOutputTokens: 1024,
+        temperature: 0.7,
+      },
     })
-    const result = await chat.sendMessage(message)
-    const response = await result.response
-    const text = response.text()
-    res.json({ reply: text })
+
+    let aborted = false
+    res.on('close', () => { aborted = true })
+
+    let wrote = false
+    try {
+      for await (const chunk of stream) {
+        if (aborted) break
+        const text = chunk.text
+        if (text) {
+          if (!wrote) {
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+            res.setHeader('Cache-Control', 'no-cache')
+            res.setHeader('X-Accel-Buffering', 'no')
+            wrote = true
+          }
+          res.write(text)
+        }
+      }
+    } catch (streamErr) {
+      console.error('Gemini stream error:', streamErr)
+      if (!wrote) return res.status(500).json({ error: 'The AI tutor is unavailable right now. Please try again.' })
+      res.write('\n\n(The reply was interrupted. Please try again.)')
+    }
+
+    if (!wrote && !aborted) {
+      // Nothing came back, usually a safety block
+      return res.status(502).json({ error: "I couldn't answer that one. Try rephrasing your question." })
+    }
+    res.end()
   } catch (err) {
     console.error('Gemini error:', err)
-    res.status(500).json({ error: 'AI service error' })
+    if (!res.headersSent) res.status(500).json({ error: 'The AI tutor is unavailable right now. Please try again.' })
+    else res.end()
   }
 })
 
