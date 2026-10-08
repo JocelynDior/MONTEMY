@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
+import GradeSubjectFields from '../../components/student/GradeSubjectFields'
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -63,6 +64,9 @@ export default function Register() {
   const [error, setError] = useState('')
   const [confirmEmail, setConfirmEmail] = useState('')
   const [verifyChoice, setVerifyChoice] = useState('now')
+  const [grade, setGrade] = useState('')
+  const [subjects, setSubjects] = useState([])
+  const isStudent = type === 'student'
 
   const setField = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
@@ -109,6 +113,11 @@ export default function Register() {
       return
     }
 
+    if (isStudent && (!grade || subjects.length === 0)) {
+      setError('Please choose your grade and at least one subject.')
+      return
+    }
+
     setLoading(true)
     try {
       if (isAdmin) {
@@ -135,7 +144,7 @@ export default function Register() {
         const res = await fetch(`${API_URL}/api/auth/register-later`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, password: form.password, role: type, orgId: form.org }),
+          body: JSON.stringify({ name, email, password: form.password, role: type, orgId: form.org, ...(isStudent ? { grade, subjects } : {}) }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(data.error || 'Registration failed.')
@@ -154,7 +163,7 @@ export default function Register() {
         email,
         password: form.password,
         options: {
-          data: { name, role: type, org_id: form.org },
+          data: { name, role: type, org_id: form.org, ...(isStudent ? { grade, subjects } : {}) },
           emailRedirectTo: `${window.location.origin}/login`,
         },
       })
@@ -274,6 +283,10 @@ export default function Register() {
                   </div>
                 )}
               </div>
+            )}
+
+            {isStudent && (
+              <GradeSubjectFields grade={grade} subjects={subjects} onGrade={setGrade} onSubjects={setSubjects} />
             )}
 
             <div style={{ marginBottom: '1.25rem' }}>
