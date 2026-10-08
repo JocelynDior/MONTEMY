@@ -241,6 +241,47 @@ function cleanGrade(g) {
   return GRADES.includes(t) ? t : null
 }
 
+// Class letters a school can use. Together with the grade they make a pair such as 8C.
+const CLASS_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
+
+function cleanLetter(l) {
+  const t = String(l ?? '').trim().toUpperCase()
+  return CLASS_LETTERS.includes(t) ? t : null
+}
+
+// A "class" row is one grade + letter in one school (e.g. 8C). Created the first time someone picks it.
+async function getOrCreateClass(orgId, grade, letter) {
+  const find = () => supabase.from('classes').select('id, name, grade, org_id')
+    .eq('org_id', orgId).eq('grade', grade).eq('name', letter).maybeSingle()
+  let { data } = await find()
+  if (data) return data
+  const { error } = await supabase.from('classes').insert({ org_id: orgId, grade, name: letter })
+  if (error && error.code !== '23505') throw error
+  ;({ data } = await find())
+  return data
+}
+
+const classLabel = (c) => `${c.grade ?? ''}${c.name ?? ''}`
+const shapeClass = (c) => ({ id: c.id, name: classLabel(c), grade: String(c.grade ?? ''), letter: c.name })
+const sortClasses = (list) => [...list].sort((a, b) =>
+  (Number(a.grade) || 0) - (Number(b.grade) || 0) || String(a.letter).localeCompare(String(b.letter)))
+
+// { classId: 'Trevor, Sam' } built from teacher_classes
+async function teacherNamesByClass(classIds) {
+  const out = {}
+  if (!classIds.length) return out
+  const { data: links } = await supabase.from('teacher_classes').select('teacher_id, class_id').in('class_id', classIds)
+  const ids = [...new Set((links || []).map(l => l.teacher_id))]
+  if (!ids.length) return out
+  const { data: users } = await supabase.from('users').select('id, name').in('id', ids)
+  const byId = Object.fromEntries((users || []).map(u => [u.id, u.name]))
+  for (const l of links || []) {
+    if (!byId[l.teacher_id]) continue
+    out[l.class_id] = out[l.class_id] ? `${out[l.class_id]}, ${byId[l.teacher_id]}` : byId[l.teacher_id]
+  }
+  return out
+}
+
 function cleanSubjects(input) {
   if (!Array.isArray(input)) return []
   const seen = new Set()
@@ -375,28 +416,6 @@ async function loadStudent(authUser) {
   return { user, student }
 }
 
-// classes.teacher_id may point at users.id or teachers.id, so resolve both
-async function teacherNames(teacherIds) {
-  const ids = [...new Set(teacherIds.filter(Boolean))]
-  const names = {}
-  if (!ids.length) return names
-
-  const { data: direct } = await supabase.from('users').select('id, name').in('id', ids)
-  for (const u of direct || []) names[u.id] = u.name
-
-  const missing = ids.filter(id => !names[id])
-  if (missing.length) {
-    const { data: teacherRows } = await supabase.from('teachers').select('id, user_id').in('id', missing)
-    const userIds = (teacherRows || []).map(t => t.user_id).filter(Boolean)
-    if (userIds.length) {
-      const { data: users } = await supabase.from('users').select('id, name').in('id', userIds)
-      const byId = Object.fromEntries((users || []).map(u => [u.id, u.name]))
-      for (const t of teacherRows || []) if (byId[t.user_id]) names[t.id] = byId[t.user_id]
-    }
-  }
-  return names
-}
-
 function titleCase(str) {
   const t = String(str || '').trim()
   return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : ''
@@ -415,7 +434,7 @@ app.get('/api/student/overview', verifyToken, studentLimiter, async (req, res) =
         ? supabase.from('organizations').select('id, name').eq('id', user.org_id).maybeSingle()
         : Promise.resolve({ data: null }),
       student?.class_id
-        ? supabase.from('classes').select('id, name, subject, grade, teacher_id').eq('id', student.class_id).maybeSingle()
+        ? supabase.from('classes').select('id, name, grade').eq('id', student.class_id).maybeSingle()
         : Promise.resolve({ data: null }),
       user.org_id
         ? supabase.from('events').select('id, title, description, date, location, type')
@@ -427,8 +446,8 @@ app.get('/api/student/overview', verifyToken, studentLimiter, async (req, res) =
     let classInfo = null
     let assignments = []
     if (cls) {
-      const names = await teacherNames([cls.teacher_id])
-      classInfo = { id: cls.id, name: cls.name, subject: cls.subject, grade: cls.grade, teacherName: names[cls.teacher_id] || null }
+      const names = await teacherNamesByClass([cls.id])
+      classInfo = { ...shapeClass(cls), teacherName: names[cls.id] || null }
       const { data } = await supabase
         .from('assignments').select('id, class_id, title, description, due_date')
         .eq('class_id', cls.id).order('due_date', { ascending: true })
@@ -493,7 +512,7 @@ app.get('/api/student/overview', verifyToken, studentLimiter, async (req, res) =
 
     const subjects = Array.isArray(student?.subjects) ? student.subjects : []
     res.json({
-      profile: { name: user.name, grade: student?.grade ?? null, subjects, classId: student?.class_id ?? null },
+      profile: { name: user.name, grade: student?.grade ?? null, subjects, classId: student?.class_id ?? null, letter: cls?.name ?? null },
       org: orgRes.data || null,
       isVerified: !!user.is_verified,
       classInfo,
@@ -509,36 +528,13 @@ app.get('/api/student/overview', verifyToken, studentLimiter, async (req, res) =
   }
 })
 
-// Classes in the student's own school, for the "choose your class" picker
-app.get('/api/student/classes', verifyToken, studentLimiter, async (req, res) => {
-  try {
-    const ctx = await loadStudent(req.user)
-    if (!ctx) return res.status(403).json({ error: 'Students only' })
-    if (!ctx.user.org_id) return res.json({ classes: [] })
-
-    const { data, error } = await supabase
-      .from('classes').select('id, name, subject, grade, teacher_id').eq('org_id', ctx.user.org_id).order('name')
-    if (error) throw error
-
-    const names = await teacherNames((data || []).map(c => c.teacher_id))
-    res.json({
-      classes: (data || []).map(c => ({
-        id: c.id, name: c.name, subject: c.subject, grade: c.grade, teacherName: names[c.teacher_id] || null,
-      })),
-    })
-  } catch (err) {
-    console.error('Student classes error:', err)
-    res.status(500).json({ error: 'Could not load classes.' })
-  }
-})
-
 // Student updates their own grade, subjects and class
 app.put('/api/student/profile', verifyToken, studentLimiter, async (req, res) => {
   try {
     const ctx = await loadStudent(req.user)
     if (!ctx) return res.status(403).json({ error: 'Students only' })
 
-    const { grade, subjects, classId } = req.body || {}
+    const { grade, subjects, letter } = req.body || {}
     const patch = {}
 
     if (grade !== undefined) {
@@ -547,16 +543,24 @@ app.put('/api/student/profile', verifyToken, studentLimiter, async (req, res) =>
       patch.grade = g
     }
     if (subjects !== undefined) patch.subjects = cleanSubjects(subjects)
-    if (classId !== undefined) {
-      if (classId === null || classId === '') {
+
+    const finalGrade = patch.grade ?? ctx.student?.grade
+    if (letter !== undefined) {
+      if (letter === null || letter === '') {
         patch.class_id = null
       } else {
-        const { data: c } = await supabase.from('classes').select('id, org_id').eq('id', classId).maybeSingle()
-        if (!c || c.org_id !== ctx.user.org_id) {
-          return res.status(400).json({ error: 'That class was not found in your school.' })
-        }
+        const l = cleanLetter(letter)
+        if (!l) return res.status(400).json({ error: 'Please choose a class letter from A to F.' })
+        if (!finalGrade) return res.status(400).json({ error: 'Choose your grade first.' })
+        if (!ctx.user.org_id) return res.status(400).json({ error: 'Your account is not linked to a school yet.' })
+        const c = await getOrCreateClass(ctx.user.org_id, finalGrade, l)
+        if (!c) throw new Error('Could not create class')
         patch.class_id = c.id
       }
+    } else if (patch.grade && ctx.student?.class_id) {
+      // Grade changed without a new class letter: drop the old class if it is for a different grade
+      const { data: old } = await supabase.from('classes').select('grade').eq('id', ctx.student.class_id).maybeSingle()
+      if (old && String(old.grade) !== patch.grade) patch.class_id = null
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to update.' })
 
@@ -586,7 +590,7 @@ app.get('/api/student/resources', verifyToken, studentLimiter, async (req, res) 
 })
 
 // ---------- Teacher routes (Phase 10) ----------
-// A teacher's classes are the rows in `classes` where teacher_id is their own user id.
+// A teacher's classes are the grade+letter pairs they added (rows in teacher_classes).
 // Every route below checks that the class/assignment belongs to the signed-in teacher.
 const teacherLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -609,10 +613,20 @@ function requireVerified(user, res) {
   return false
 }
 
+// A teacher's classes are the grade+letter pairs they have added (teacher_classes links)
 async function getTeacherClasses(userId) {
-  const { data } = await supabase
-    .from('classes').select('id, name, subject, grade').eq('teacher_id', userId).order('name')
-  return data || []
+  const { data: links } = await supabase.from('teacher_classes').select('class_id').eq('teacher_id', userId)
+  const ids = (links || []).map(l => l.class_id)
+  if (!ids.length) return []
+  const { data } = await supabase.from('classes').select('id, name, grade').in('id', ids)
+  return sortClasses((data || []).map(shapeClass))
+}
+
+async function teacherTeaches(userId, classId) {
+  if (!classId) return false
+  const { data } = await supabase.from('teacher_classes').select('class_id')
+    .eq('teacher_id', userId).eq('class_id', classId).maybeSingle()
+  return !!data
 }
 
 // { classId: [{ id, name, email }] } built from students.class_id
@@ -635,15 +649,15 @@ async function studentsByClass(classIds) {
   return result
 }
 
-// The assignment plus its class, only if the class is taught by this teacher
+// The assignment plus its class, only if this teacher created it and still teaches that class
 async function getOwnedAssignment(userId, assignmentId) {
   const { data: assignment } = await supabase
-    .from('assignments').select('id, class_id, title, description, due_date').eq('id', assignmentId).maybeSingle()
-  if (!assignment) return null
-  const { data: cls } = await supabase
-    .from('classes').select('id, name, teacher_id').eq('id', assignment.class_id).maybeSingle()
-  if (!cls || cls.teacher_id !== userId) return null
-  return { assignment, cls }
+    .from('assignments').select('id, class_id, title, description, due_date, created_by').eq('id', assignmentId).maybeSingle()
+  if (!assignment || assignment.created_by !== userId) return null
+  if (!(await teacherTeaches(userId, assignment.class_id))) return null
+  const { data: cls } = await supabase.from('classes').select('id, name, grade').eq('id', assignment.class_id).maybeSingle()
+  if (!cls) return null
+  return { assignment, cls: { id: cls.id, name: classLabel(cls) } }
 }
 
 const hasNumericGrade = (s) => s && s.grade !== null && s.grade !== undefined && !Number.isNaN(Number(s.grade))
@@ -693,7 +707,7 @@ app.get('/api/teacher/overview', verifyToken, teacherLimiter, async (req, res) =
     if (classIds.length) {
       const { data } = await supabase
         .from('assignments').select('id, class_id, title, due_date').in('class_id', classIds)
-        .order('due_date', { ascending: true })
+        .eq('created_by', user.id).order('due_date', { ascending: true })
       assignments = data || []
     }
     const stats = await submissionStats(assignments, roster)
@@ -741,6 +755,46 @@ app.get('/api/teacher/classes', verifyToken, teacherLimiter, async (req, res) =>
   }
 })
 
+// Teacher adds a grade + letter pair (e.g. 8C). The pair is created if nobody has used it yet.
+app.post('/api/teacher/classes', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+    if (!user.org_id) return res.status(400).json({ error: 'Your account is not linked to a school yet.' })
+
+    const grade = cleanGrade(req.body?.grade)
+    const letter = cleanLetter(req.body?.letter)
+    if (!grade) return res.status(400).json({ error: 'Please choose a grade from 1 to 12.' })
+    if (!letter) return res.status(400).json({ error: 'Please choose a class letter from A to F.' })
+
+    const cls = await getOrCreateClass(user.org_id, grade, letter)
+    if (!cls) throw new Error('Could not create class')
+    const { error } = await supabase.from('teacher_classes')
+      .upsert({ teacher_id: user.id, class_id: cls.id }, { onConflict: 'teacher_id,class_id' })
+    if (error) throw error
+    res.json({ success: true, id: cls.id })
+  } catch (err) {
+    console.error('Add class error:', err)
+    res.status(500).json({ error: 'Could not add the class. Please try again.' })
+  }
+})
+
+// Removes the class from this teacher's list only. Students and assignments are left untouched.
+app.delete('/api/teacher/classes/:id', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    const { error } = await supabase.from('teacher_classes')
+      .delete().eq('teacher_id', user.id).eq('class_id', req.params.id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Remove class error:', err)
+    res.status(500).json({ error: 'Could not remove the class. Please try again.' })
+  }
+})
+
 // All assignments across the teacher's classes
 app.get('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res) => {
   try {
@@ -754,6 +808,7 @@ app.get('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res
     const roster = await studentsByClass(classIds)
     const { data } = await supabase
       .from('assignments').select('id, class_id, title, description, due_date').in('class_id', classIds)
+      .eq('created_by', user.id)
     const assignments = data || []
     const stats = await submissionStats(assignments, roster)
     const className = Object.fromEntries(classes.map(c => [c.id, c.name]))
@@ -783,9 +838,8 @@ app.post('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, re
     const input = cleanAssignmentInput(req.body || {})
     if (input.error) return res.status(400).json({ error: input.error })
 
-    const { data: cls } = await supabase
-      .from('classes').select('id, teacher_id').eq('id', req.body.classId).maybeSingle()
-    if (!cls || cls.teacher_id !== user.id) {
+    const cls = { id: req.body.classId }
+    if (!(await teacherTeaches(user.id, cls.id))) {
       return res.status(400).json({ error: 'Please choose one of your own classes.' })
     }
 
@@ -936,12 +990,13 @@ app.get('/api/teacher/progress', verifyToken, teacherLimiter, async (req, res) =
     const user = await loadTeacher(req.user)
     if (!user) return res.status(403).json({ error: 'Teachers only' })
 
-    const { data: cls } = await supabase
-      .from('classes').select('id, name, teacher_id').eq('id', req.query.classId).maybeSingle()
-    if (!cls || cls.teacher_id !== user.id) return res.status(404).json({ error: 'Class not found.' })
+    if (!(await teacherTeaches(user.id, req.query.classId))) return res.status(404).json({ error: 'Class not found.' })
+    const { data: clsRow } = await supabase.from('classes').select('id, name, grade').eq('id', req.query.classId).maybeSingle()
+    if (!clsRow) return res.status(404).json({ error: 'Class not found.' })
+    const cls = { id: clsRow.id, name: classLabel(clsRow) }
 
     const roster = (await studentsByClass([cls.id]))[cls.id]
-    const { data: assignments } = await supabase.from('assignments').select('id').eq('class_id', cls.id)
+    const { data: assignments } = await supabase.from('assignments').select('id').eq('class_id', cls.id).eq('created_by', user.id)
     const assignmentIds = (assignments || []).map(a => a.id)
 
     let subs = []
