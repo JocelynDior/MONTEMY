@@ -53,7 +53,7 @@ function TeacherSummary() {
 
       {classes.length === 0 ? (
         <div style={{ ...panel, ...muted }}>
-          You haven't been assigned any classes yet. Once your school admin assigns you a class it will show up here.
+          You haven't added any classes yet. Go to My Classes and add the grade and class you teach, for example 8C.
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
@@ -64,7 +64,7 @@ function TeacherSummary() {
                 style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.6rem', cursor: 'pointer' }}>
                 <span>
                   <strong>{c.name}</strong>
-                  <span style={{ ...muted, fontSize: '0.8rem' }}>{c.subject ? ` · ${c.subject}` : ''}{c.grade ? ` · Grade ${c.grade}` : ''}</span>
+                  <span style={{ ...muted, fontSize: '0.8rem' }}>{c.grade ? ` · Grade ${c.grade}` : ''}</span>
                 </span>
                 <span style={muted}>{c.studentCount} student{c.studentCount === 1 ? '' : 's'}</span>
               </div>
