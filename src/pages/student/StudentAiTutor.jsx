@@ -191,15 +191,17 @@ export default function StudentAiTutor() {
 
           {/* Input */}
           <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.75rem', alignItems: 'flex-end' }}>
+            <style>{`.tutor-input::placeholder { color: rgba(255,255,255,0.75); }`}</style>
             <textarea
+              className="tutor-input"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Ask your tutor anything..."
+              placeholder="Ask a question..."
               rows={1}
               maxLength={2000}
               disabled={limitReached}
-              style={{ ...glassInput, resize: 'none', maxHeight: '8rem', flex: 1 }}
+              style={{ ...glassInput, resize: 'none', minHeight: '3rem', maxHeight: '8rem', flex: 1, fontSize: '16px', lineHeight: 1.4 }}
             />
             <button onClick={() => send()} disabled={sending || limitReached || !input.trim()}
               style={{ ...glassBtn, width: 'auto', padding: '0.85rem 1.4rem', opacity: sending || limitReached || !input.trim() ? 0.5 : 1 }}>
