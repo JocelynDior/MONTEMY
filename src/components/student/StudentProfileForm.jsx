@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { apiFetch } from '../../api/apiClient'
 import { glassBtn, glassInput, C } from '../../styles/glass'
 import GradeSubjectFields from './GradeSubjectFields'
-import { norm } from './studentUtils'
+import { CLASS_LETTERS } from '../../config/studentOptions'
 
 const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
 
@@ -10,23 +10,9 @@ const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', 
 export default function StudentProfileForm({ initial, onSaved, onCancel }) {
   const [grade, setGrade] = useState(initial?.grade || '')
   const [subjects, setSubjects] = useState(initial?.subjects || [])
-  const [classId, setClassId] = useState(initial?.classId || '')
-  const [classes, setClasses] = useState(null)
+  const [letter, setLetter] = useState(initial?.letter || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    apiFetch('/api/student/classes')
-      .then(r => setClasses(r.classes || []))
-      .catch(() => setClasses([]))
-  }, [])
-
-  // Classes for the chosen grade first
-  const sorted = [...(classes || [])].sort((a, b) => {
-    const am = norm(a.grade) === norm(grade) ? 0 : 1
-    const bm = norm(b.grade) === norm(grade) ? 0 : 1
-    return am - bm || String(a.name).localeCompare(String(b.name))
-  })
 
   const save = async (e) => {
     e.preventDefault()
@@ -37,7 +23,7 @@ export default function StudentProfileForm({ initial, onSaved, onCancel }) {
     try {
       await apiFetch('/api/student/profile', {
         method: 'PUT',
-        body: { grade, subjects, classId: classId || null },
+        body: { grade, subjects, letter: letter || null },
       })
       onSaved?.()
     } catch (err) {
@@ -55,21 +41,16 @@ export default function StudentProfileForm({ initial, onSaved, onCancel }) {
 
       <div style={{ marginBottom: '1.25rem' }}>
         <label style={labelStyle}>Your class</label>
-        {classes === null ? (
-          <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }}>Loading classes...</div>
-        ) : classes.length === 0 ? (
-          <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }}>
-            Your school hasn't added any classes yet. You can choose one here once they have.
+        <select className="reg-input" style={glassInput} value={letter} onChange={e => setLetter(e.target.value)}>
+          <option value="" style={{ background: '#001F3F' }}>No class selected</option>
+          {CLASS_LETTERS.map(l => (
+            <option key={l} value={l} style={{ background: '#001F3F' }}>{grade ? `${grade}${l}` : `Class ${l}`}</option>
+          ))}
+        </select>
+        {grade && letter && (
+          <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem', marginTop: '0.4rem' }}>
+            You'll be in class {grade}{letter}.
           </div>
-        ) : (
-          <select className="reg-input" style={glassInput} value={classId} onChange={e => setClassId(e.target.value)}>
-            <option value="" style={{ background: '#001F3F' }}>No class selected</option>
-            {sorted.map(c => (
-              <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>
-                {c.name}{c.subject ? ` · ${c.subject}` : ''}{c.grade ? ` · Grade ${norm(c.grade) || c.grade}` : ''}{c.teacherName ? ` · ${c.teacherName}` : ''}
-              </option>
-            ))}
-          </select>
         )}
       </div>
 
