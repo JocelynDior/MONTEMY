@@ -1,149 +1,190 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../supabase/client'
+import React, { useState } from 'react'
+import StudentPage from '../../components/student/StudentPage'
+import StudentProfileForm from '../../components/student/StudentProfileForm'
+import { useStudentOverview } from '../../hooks/useStudentOverview'
+import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
+import { glassCard, glassBtn, C } from '../../styles/glass'
 
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)', lightNavy: 'var(--color-bg-light)' }
 const TABS = ['Subjects', 'Schedule', 'Homework', 'Progress']
+const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
+const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
 
-export default function StudentAcademics() {
-  const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState('Subjects')
-  const [student, setStudent] = useState(null)
-  const [subjects, setSubjects] = useState([])
-  const [assignments, setAssignments] = useState([])
-  const [progress, setProgress] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [menuOpen, setMenuOpen] = useState(false)
+function Empty({ children }) {
+  return <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>{children}</div>
+}
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async user => {
-      if (!user) return navigate('/')
-      try {
-        const snap = await getDoc(doc(db, 'students', user.uid))
-        if (snap.exists()) {
-          const d = { id: user.uid, ...snap.data() }
-          setStudent(d)
-          loadAcademicData(d)
-        }
-      } catch (err) { console.error(err) }
-    })
-    return () => unsub()
-  }, [])
+function SubjectsTab({ data, reload }) {
+  const [editing, setEditing] = useState(false)
+  const { profile, classInfo } = data
 
-  const loadAcademicData = async (studentData) => {
-    setLoading(true)
-    try {
-      setSubjects(studentData.subjects || [])
-      const [assignSnap, progressSnap] = await Promise.all([
-        getDocs(query(collection(db, 'assignments'), where('className', 'in', studentData.subjects?.length > 0 ? studentData.subjects : ['__none__']))),
-        getDocs(query(collection(db, 'progress'), where('studentId', '==', studentData.id)))
-      ])
-      setAssignments(assignSnap.docs.map(d => ({ id: d.id, ...d.data() })))
-      setProgress(progressSnap.docs.map(d => ({ id: d.id, ...d.data() })))
-    } catch (err) { console.error(err) }
-    setLoading(false)
+  if (editing || !profile.grade || profile.subjects.length === 0) {
+    return (
+      <div style={panel}>
+        <h3 style={{ color: C.turquoise, marginBottom: '1rem' }}>{editing ? 'Edit your profile' : 'Set up your profile'}</h3>
+        <StudentProfileForm initial={profile}
+          onSaved={() => { setEditing(false); reload() }}
+          onCancel={editing ? () => setEditing(false) : undefined} />
+      </div>
+    )
   }
 
-  const schedule = [
-    { day: 'Monday', periods: ['Mathematics', 'English', 'Science', 'Physical Education'] },
-    { day: 'Tuesday', periods: ['History', 'Geography', 'Mathematics', 'Art'] },
-    { day: 'Wednesday', periods: ['Science', 'English', 'Technology', 'Music'] },
-    { day: 'Thursday', periods: ['Mathematics', 'History', 'English', 'Life Orientation'] },
-    { day: 'Friday', periods: ['Geography', 'Science', 'Mathematics', 'English'] },
-  ]
+  return (
+    <>
+      <div style={{ ...panel, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
+        <div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>Grade {profile.grade}</div>
+          <div style={{ ...muted, marginTop: '0.25rem' }}>
+            {classInfo
+              ? `${classInfo.name}${classInfo.subject ? ` · ${classInfo.subject}` : ''}${classInfo.teacherName ? ` · Teacher: ${classInfo.teacherName}` : ''}`
+              : 'No class selected'}
+          </div>
+        </div>
+        <button onClick={() => setEditing(true)} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>
+          {classInfo ? 'Change class or subjects' : 'Choose your class'}
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+        {profile.subjects.map(s => (
+          <div key={s} style={{ ...glassCard, padding: '1rem 1.25rem', borderLeft: `4px solid ${C.turquoise}` }}>
+            <div style={{ fontWeight: 600 }}>{s}</div>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
+function ScheduleTab({ data }) {
+  const dated = [
+    ...data.homework.filter(h => h.dueDate && (h.status === 'Not submitted' || h.status === 'Overdue') && new Date(h.dueDate) > new Date())
+      .map(h => ({ key: `h${h.id}`, date: h.dueDate, title: h.title, kind: 'Homework due' })),
+    ...data.events.map(e => ({ key: `e${e.id}`, date: e.date, title: e.title, kind: e.type || 'Event', extra: e.location })),
+  ].sort((a, b) => new Date(a.date) - new Date(b.date))
 
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }}>
-      <nav style={{ background: s.turquoise, padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ color: s.navy, fontSize: '1.5rem', fontWeight: 'bold' }}>MONTEMY</div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => navigate('/student/dashboard')} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Dashboard</button>
-          <button onClick={async () => { await signOut(auth); navigate('/') }} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Logout</button>
+    <>
+      <div style={{ ...panel, ...muted }}>
+        Your weekly class timetable will show here once your school publishes it. Until then, here is what's coming up.
+      </div>
+      {dated.length === 0 ? <Empty>Nothing coming up yet.</Empty> : dated.map(item => (
+        <div key={item.key} style={{ ...panel, display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontWeight: 600 }}>{item.title}</div>
+            <div style={{ ...muted, fontSize: '0.8rem' }}>{item.kind}{item.extra ? ` · ${item.extra}` : ''}</div>
+          </div>
+          <div style={{ ...muted, textAlign: 'right' }}>{fmtDate(item.date)}</div>
         </div>
-      </nav>
+      ))}
+    </>
+  )
+}
 
-      {/* Tabs */}
-      <div style={{ background: 'var(--color-bg-dark)', display: 'flex', overflowX: 'auto', borderBottom: `2px solid ${s.turquoise}` }}>
-        {TABS.map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
-            style={{ padding: '1rem 1.5rem', background: activeTab === tab ? s.turquoise : 'transparent', color: activeTab === tab ? s.navy : s.turquoise, border: 'none', cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap', borderBottom: activeTab === tab ? `3px solid ${s.navy}` : 'none' }}>
-            {tab}
+function HomeworkTab({ data }) {
+  const [open, setOpen] = useState(null)
+  if (!data.classInfo) return <Empty>Choose your class on the Subjects tab to see your homework.</Empty>
+  if (data.homework.length === 0) return <Empty>No homework set for {data.classInfo.name} yet.</Empty>
+
+  const list = sortByDue(data.homework)
+  return list.map(h => (
+    <div key={h.id} style={{ ...panel, cursor: 'pointer' }} onClick={() => setOpen(open === h.id ? null : h.id)}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>{h.title}</div>
+          <div style={{ ...muted, fontSize: '0.8rem' }}>
+            {h.dueDate ? `${fmtDate(h.dueDate)}${h.status === 'Not submitted' || h.status === 'Overdue' ? ` · ${dueIn(h.dueDate)}` : ''}` : 'No due date'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <span style={{ color: statusColor(h.status), fontWeight: 700 }}>{h.status}</span>
+          {h.grade !== null && <div style={{ color: gradeColor(h.grade), fontWeight: 700 }}>{h.grade}%</div>}
+        </div>
+      </div>
+      {open === h.id && (
+        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.15)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>
+          {h.description || 'No description.'}
+          {h.feedback && <div style={{ marginTop: '0.75rem', color: C.turquoise }}>Teacher feedback: <span style={{ color: 'white' }}>{h.feedback}</span></div>}
+        </div>
+      )}
+    </div>
+  ))
+}
+
+function ProgressTab({ data }) {
+  const { graded, average } = data
+  if (graded.length === 0) return <Empty>Your grades will appear here once your teachers have marked your work.</Empty>
+  const shown = graded.slice(-12)
+
+  return (
+    <>
+      <div style={panel}>
+        <div style={muted}>Overall average</div>
+        <div style={{ fontSize: '2.4rem', fontWeight: 700, color: gradeColor(average) }}>{average}%</div>
+      </div>
+
+      <div style={panel}>
+        <h3 style={{ color: C.turquoise, marginBottom: '1rem', fontSize: '1.05rem' }}>Grades over time</h3>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.6rem', height: '180px', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+          {shown.map(g => (
+            <div key={g.assignmentId} title={`${g.title}: ${g.grade}%`} style={{ flex: '0 0 44px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+              <div style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>{g.grade}</div>
+              <div style={{ width: '100%', height: `${Math.max(2, Math.min(100, g.grade)) * 1.3}px`, background: gradeColor(g.grade), borderRadius: '6px 6px 0 0', opacity: 0.85 }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ ...muted, fontSize: '0.75rem', marginTop: '0.5rem' }}>Oldest on the left. Showing your last {shown.length}.</div>
+      </div>
+
+      {[...graded].reverse().map(g => (
+        <div key={g.assignmentId} style={panel}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+            <span style={{ fontWeight: 600 }}>{g.title}</span>
+            <strong style={{ color: gradeColor(g.grade) }}>{g.grade}%</strong>
+          </div>
+          {g.feedback && <div style={{ ...muted, marginTop: '0.4rem' }}>{g.feedback}</div>}
+        </div>
+      ))}
+    </>
+  )
+}
+
+export default function StudentAcademics() {
+  const [tab, setTab] = useState('Subjects')
+  const { data, loading, error, reload } = useStudentOverview()
+
+  return (
+    <StudentPage title="My Academics" icon="📚">
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+        {TABS.map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{
+              cursor: 'pointer', padding: '0.5rem 1.1rem', borderRadius: '999px', color: 'white', fontSize: '0.9rem',
+              fontWeight: tab === t ? 700 : 400,
+              border: tab === t ? '1px solid rgba(var(--color-primary-rgb),0.9)' : '1px solid rgba(255,255,255,0.2)',
+              background: tab === t ? 'rgba(var(--color-primary-rgb),0.25)' : 'rgba(255,255,255,0.06)',
+            }}>
+            {t}
           </button>
         ))}
       </div>
 
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-        {loading ? <div style={{ textAlign: 'center', color: s.turquoise, padding: '3rem' }}>Loading...</div> : (
-          <>
-            {activeTab === 'Subjects' && (
-              <div>
-                <h2 style={{ color: s.turquoise, marginBottom: '1.5rem' }}>My Subjects</h2>
-                {subjects.length === 0 ? <p style={{ color: '#ccc' }}>No subjects assigned yet.</p>
-                  : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-                    {subjects.map((sub, i) => (
-                      <div key={i} style={{ background: 'rgba(255,255,255,0.1)', padding: '1.5rem', borderRadius: '10px', borderLeft: `4px solid ${s.turquoise}`, textAlign: 'center' }}>
-                        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📚</div>
-                        <div style={{ color: s.turquoise, fontWeight: 'bold' }}>{sub}</div>
-                      </div>
-                    ))}
-                  </div>}
-              </div>
-            )}
+      {loading && <p style={muted}>Loading...</p>}
 
-            {activeTab === 'Schedule' && (
-              <div>
-                <h2 style={{ color: s.turquoise, marginBottom: '1.5rem' }}>My Schedule</h2>
-                {schedule.map(day => (
-                  <div key={day.day} style={{ background: 'rgba(255,255,255,0.1)', padding: '1rem', borderRadius: '10px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '1rem' }}>
-                    <div style={{ color: s.turquoise, fontWeight: 'bold', fontSize: '1.1rem', marginBottom: '0.5rem' }}>{day.day}</div>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      {day.periods.map((p, i) => (
-                        <span key={i} style={{ background: 'rgba(var(--color-primary-rgb),0.2)', color: s.turquoise, padding: '0.3rem 0.8rem', borderRadius: '15px', fontSize: '0.9rem' }}>
-                          P{i+1}: {p}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+      {error && (
+        <div style={{ ...panel, borderColor: 'rgba(255,80,80,0.4)' }}>
+          <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
+          <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
+        </div>
+      )}
 
-            {activeTab === 'Homework' && (
-              <div>
-                <h2 style={{ color: s.turquoise, marginBottom: '1.5rem' }}>Homework & Assignments</h2>
-                {assignments.length === 0 ? <p style={{ color: '#ccc' }}>No assignments yet.</p>
-                  : assignments.map(a => (
-                    <div key={a.id} style={{ background: 'rgba(255,255,255,0.1)', padding: '1.5rem', borderRadius: '10px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '1rem' }}>
-                      <div style={{ color: s.turquoise, fontWeight: 'bold', fontSize: '1.1rem' }}>{a.title}</div>
-                      <div style={{ color: '#ccc', fontSize: '0.9rem', marginTop: '0.3rem' }}>
-                        {a.subject && <span>Subject: {a.subject} &nbsp;|&nbsp; </span>}
-                        {a.dueDate && <span>Due: {a.dueDate}</span>}
-                      </div>
-                      {a.description && <p style={{ color: '#aaa', marginTop: '0.5rem', fontSize: '0.9rem' }}>{a.description}</p>}
-                    </div>
-                  ))}
-              </div>
-            )}
-
-            {activeTab === 'Progress' && (
-              <div>
-                <h2 style={{ color: s.turquoise, marginBottom: '1.5rem' }}>My Progress</h2>
-                {progress.length === 0 ? <p style={{ color: '#ccc' }}>No progress records yet.</p>
-                  : progress.map(p => (
-                    <div key={p.id} style={{ background: 'rgba(255,255,255,0.1)', padding: '1.5rem', borderRadius: '10px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '1rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                        <div style={{ color: s.turquoise, fontWeight: 'bold' }}>{p.subject}</div>
-                        <div style={{ background: parseInt(p.mark) >= 50 ? '#2ecc71' : '#e74c3c', color: 'white', padding: '0.3rem 0.8rem', borderRadius: '15px', fontWeight: 'bold' }}>{p.mark}%</div>
-                      </div>
-                      {p.behavior && <div style={{ color: '#ccc', fontSize: '0.9rem' }}>Behavior: {p.behavior}</div>}
-                      {p.comment && <div style={{ color: '#aaa', fontSize: '0.9rem', marginTop: '0.3rem' }}>{p.comment}</div>}
-                    </div>
-                  ))}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
+      {data && (
+        <>
+          {tab === 'Subjects' && <SubjectsTab data={data} reload={reload} />}
+          {tab === 'Schedule' && <ScheduleTab data={data} />}
+          {tab === 'Homework' && <HomeworkTab data={data} />}
+          {tab === 'Progress' && <ProgressTab data={data} />}
+        </>
+      )}
+    </StudentPage>
   )
 }
