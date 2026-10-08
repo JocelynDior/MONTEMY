@@ -61,7 +61,7 @@ function AssignmentForm({ classes, assignment, onDone, onCancel }) {
       <div style={{ marginBottom: '1rem' }}>
         <label style={labelStyle}>Class</label>
         <select style={glassInput} value={classId} onChange={e => setClassId(e.target.value)} disabled={editing} required>
-          {classes.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}{c.subject ? ` · ${c.subject}` : ''}</option>)}
+          {classes.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}</option>)}
         </select>
       </div>
 
@@ -222,7 +222,7 @@ export default function TeacherAssignments() {
 
       {!classes.loading && classes.data && classList.length === 0 && (
         <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
-          You need a class before you can set assignments. Once your school admin assigns you a class, you can create work for it here.
+          You need a class before you can set assignments. Add the grade and class you teach in My Classes first.
         </div>
       )}
 
