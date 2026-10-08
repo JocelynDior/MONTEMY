@@ -1,38 +1,62 @@
-import React from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import StudentPage from '../../components/student/StudentPage'
+import { apiFetch } from '../../api/apiClient'
+import { glassCard, glassInput, C } from '../../styles/glass'
 
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
-
-const resources = [
-  { icon: '📖', title: 'Study Guides', description: 'Access curated study materials for all subjects.' },
-  { icon: '🎥', title: 'Video Lessons', description: 'Watch video explanations from your teachers.' },
-  { icon: '📝', title: 'Practice Papers', description: 'Download past exam papers and practice tests.' },
-  { icon: '🔗', title: 'Useful Links', description: 'Explore recommended educational websites.' },
-]
+const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
+const isLink = (u) => typeof u === 'string' && /^https?:\/\//i.test(u)
 
 export default function StudentResources() {
-  const navigate = useNavigate()
+  const [resources, setResources] = useState(null)
+  const [error, setError] = useState('')
+  const [subject, setSubject] = useState('')
+
+  useEffect(() => {
+    apiFetch('/api/student/resources')
+      .then(r => setResources(r.resources || []))
+      .catch(err => { setError(err.message || 'Could not load resources.'); setResources([]) })
+  }, [])
+
+  const subjects = [...new Set((resources || []).map(r => r.subject).filter(Boolean))].sort()
+  const shown = (resources || []).filter(r => !subject || r.subject === subject)
+
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }}>
-      <nav style={{ background: s.turquoise, padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ color: s.navy, fontSize: '1.2rem', fontWeight: 'bold' }}>MONTEMY</div>
-        <button onClick={() => navigate('/student/dashboard')} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Dashboard</button>
-      </nav>
-      <div style={{ maxWidth: '900px', margin: '0 auto', padding: '2rem' }}>
-        <h2 style={{ color: s.turquoise, marginBottom: '1.5rem' }}>📚 Learning Resources</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
-          {resources.map(r => (
-            <div key={r.title} style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '12px', borderLeft: `4px solid ${s.turquoise}`, padding: '1.5rem', cursor: 'pointer' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(var(--color-primary-rgb),0.1)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>{r.icon}</div>
-              <h3 style={{ color: s.turquoise, marginBottom: '0.5rem' }}>{r.title}</h3>
-              <p style={{ color: '#ccc', fontSize: '0.9rem', lineHeight: '1.5' }}>{r.description}</p>
-              <div style={{ marginTop: '1rem', color: '#aaa', fontSize: '0.8rem', fontStyle: 'italic' }}>Coming soon...</div>
-            </div>
-          ))}
+    <StudentPage title="Learning Resources" icon="📖">
+      {error && (
+        <div style={{ background: 'rgba(255,80,80,0.15)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.7rem 1rem', marginBottom: '1rem', color: '#ffb3b3' }}>
+          {error}
         </div>
-      </div>
-    </div>
+      )}
+
+      {resources === null ? <p style={muted}>Loading...</p> : resources.length === 0 && !error ? (
+        <div style={{ ...glassCard, padding: '2rem', textAlign: 'center', ...muted }}>
+          Your teachers haven't added any study materials yet. Check back soon.
+        </div>
+      ) : (
+        <>
+          {subjects.length > 1 && (
+            <select value={subject} onChange={e => setSubject(e.target.value)}
+              style={{ ...glassInput, width: 'auto', minWidth: '220px', marginBottom: '1.25rem' }}>
+              <option value="" style={{ background: '#001F3F' }}>All subjects</option>
+              {subjects.map(s => <option key={s} value={s} style={{ background: '#001F3F' }}>{s}</option>)}
+            </select>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+            {shown.map(r => (
+              <div key={r.id} style={{ ...glassCard, padding: '1.25rem', borderLeft: `4px solid ${C.turquoise}` }}>
+                <div style={{ fontWeight: 600, marginBottom: '0.3rem', overflowWrap: 'anywhere' }}>{r.title}</div>
+                <div style={{ ...muted, fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+                  {[r.subject, r.grade ? `Grade ${r.grade}` : null].filter(Boolean).join(' · ') || 'General'}
+                </div>
+                {isLink(r.file_url)
+                  ? <a href={r.file_url} target="_blank" rel="noopener noreferrer" style={{ color: C.turquoise, fontWeight: 600 }}>Open</a>
+                  : <span style={{ ...muted, fontSize: '0.8rem' }}>File not available yet</span>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </StudentPage>
   )
 }
