@@ -5,6 +5,7 @@ import { logout } from '../../supabase/authHelpers'
 import { apiFetch } from '../../api/apiClient'
 import LinkRequests from '../../components/admin/LinkRequests'
 import PlatformStats from '../../components/admin/PlatformStats'
+import MessagesBell from '../../components/layout/MessagesBell'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -82,6 +83,7 @@ export default function AdminDashboard() {
             </span>
           )}
           {profile?.name && <span style={{ color: 'rgba(255,255,255,0.8)' }}>{profile.name}</span>}
+          <MessagesBell />
           <button onClick={handleLogout} style={smallBtn}>Logout</button>
         </div>
       </nav>
@@ -115,7 +117,7 @@ export default function AdminDashboard() {
           <>
             <h2 style={{ color: C.turquoise, marginBottom: '1.25rem' }}>Overview</h2>
             <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
-              {[['/admin/users', '👥 Users'], ['/admin/classes', '🏫 Classes'], ['/admin/organisations', '🏢 Organisations'], ['/admin/chat', '💬 Messages']].map(([path, text]) => (
+              {[['/admin/users', '👥 Users'], ['/admin/classes', '🏫 Classes'], ['/admin/organisations', '🏢 Organisations'], ['/messages', '💬 Messages']].map(([path, text]) => (
                 <button key={path} onClick={() => navigate(path)} style={smallBtn}>{text}</button>
               ))}
             </div>
