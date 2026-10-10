@@ -1,159 +1,185 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../supabase/client'
+import React, { useState } from 'react'
+import StudentPage from '../../components/student/StudentPage'
+import { Chip, ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '../../components/parent/parentUi'
+import { apiFetch } from '../../api/apiClient'
+import { useApiData } from '../../hooks/useApiData'
+import { fmtDate } from '../../components/student/studentUtils'
+import { glassInput } from '../../styles/glass'
 
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
+const FALLBACK_TYPES = ['General', 'Academic', 'Sports', 'Meeting', 'Holiday', 'Other']
+const label = { display: 'block', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', marginBottom: '0.3rem' }
 
-export default function PrincipalEvents() {
-  const navigate = useNavigate()
-  const [events, setEvents] = useState([])
-  const [search, setSearch] = useState('')
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [openEventMenu, setOpenEventMenu] = useState(null)
-  const [currentUser, setCurrentUser] = useState(null)
-  const [form, setForm] = useState({ title: '', date: '', time: '', venue: '', description: '' })
+const pad = (n) => String(n).padStart(2, '0')
+// ISO string → value for <input type="datetime-local"> in the browser's own time zone
+function toLocalInput(iso) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, user => {
-      if (!user) return navigate('/')
-      setCurrentUser(user)
-      loadEvents()
-    })
-    return () => unsub()
-  }, [])
+const EMPTY = { title: '', date: '', location: '', type: 'General', description: '' }
 
-  const loadEvents = async () => {
-    try {
-      const q = query(collection(db, 'events'), orderBy('date', 'asc'))
-      const snap = await getDocs(q)
-      setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-    } catch (err) { console.error(err) }
-  }
-
-  const saveEvent = async (e) => {
-    e.preventDefault()
-    try {
-      const data = { ...form, createdBy: currentUser?.uid, createdAt: serverTimestamp() }
-      if (editingId) {
-        await updateDoc(doc(db, 'events', editingId), data)
-      } else {
-        await addDoc(collection(db, 'events'), data)
-      }
-      setShowForm(false); setEditingId(null)
-      setForm({ title: '', date: '', time: '', venue: '', description: '' })
-      loadEvents()
-    } catch (err) { alert('Error: ' + err.message) }
-  }
-
-  const deleteEvent = async (id) => {
-    if (!confirm('Cancel this event?')) return
-    await deleteDoc(doc(db, 'events', id))
-    loadEvents()
-  }
-
-  const editEvent = (event) => {
-    setForm({ title: event.title, date: event.date, time: event.time || '', venue: event.venue, description: event.description })
-    setEditingId(event.id); setShowForm(true); setOpenEventMenu(null)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  const filtered = events.filter(e =>
-    e.title?.toLowerCase().includes(search.toLowerCase()) ||
-    e.venue?.toLowerCase().includes(search.toLowerCase()) ||
-    e.description?.toLowerCase().includes(search.toLowerCase())
-  )
-
-  const NavBar = () => (
-    <nav style={{ background: s.turquoise, padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
-      <div style={{ color: s.navy, fontSize: '1.5rem', fontWeight: 'bold' }}>MONTEMY</div>
-      <div style={{ position: 'relative' }}>
-        <button onClick={() => setMenuOpen(!menuOpen)} style={{ background: s.navy, color: s.turquoise, width: '40px', height: '40px', border: 'none', borderRadius: '50%', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '3px', padding: '8px' }}>
-          {[0,1,2].map(i => <div key={i} style={{ width: '20px', height: '2px', background: s.turquoise }} />)}
-        </button>
-        {menuOpen && (
-          <div style={{ position: 'absolute', right: 0, top: '50px', background: s.turquoise, minWidth: '160px', borderRadius: '10px', boxShadow: '0 8px 16px rgba(0,0,0,0.2)', zIndex: 10, overflow: 'hidden' }}>
-            {[['Back to Dashboard', () => navigate('/principal/dashboard')], ['Logout', async () => { await signOut(auth); navigate('/') }]].map(([label, fn]) => (
-              <div key={label} onClick={() => { setMenuOpen(false); fn() }} style={{ color: s.navy, padding: '12px 16px', cursor: 'pointer', fontWeight: 'bold' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(var(--color-bg-rgb),0.1)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>{label}</div>
-            ))}
-          </div>
-        )}
-      </div>
-    </nav>
-  )
+function EventForm({ initial, types, saving, error, onSave, onCancel, isEdit }) {
+  const [form, setForm] = useState(initial)
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
 
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }}>
-      <NavBar />
-      <div style={{ textAlign: 'center', padding: '2rem' }}>
-        <h1 style={{ color: s.turquoise, fontSize: '2rem' }}>School Events</h1>
-        <p style={{ color: '#ccc', fontSize: '1.2rem' }}>Manage and view upcoming school events</p>
-      </div>
-      <div style={{ maxWidth: '600px', margin: '0 auto 2rem', padding: '0 2rem' }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search event..."
-          style={{ width: '100%', padding: '1rem', borderRadius: '50px', border: `2px solid ${s.turquoise}`, background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '1rem', outline: 'none' }} />
-      </div>
-      <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '0 2rem 3rem' }}>
-        {showForm && (
-          <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '15px', padding: '2rem', marginBottom: '2rem', borderLeft: '4px solid #4CAF50' }}>
-            <h3 style={{ color: s.turquoise, fontSize: '1.5rem', marginBottom: '1.5rem', textAlign: 'center' }}>{editingId ? 'Edit Event' : 'Add New Event'}</h3>
-            <form onSubmit={saveEvent}>
-              {[['Event Title', 'title', 'text'], ['Event Date', 'date', 'date'], ['Event Time', 'time', 'time'], ['Venue', 'venue', 'text']].map(([label, key, type]) => (
-                <div key={key} style={{ marginBottom: '1.5rem' }}>
-                  <label style={{ display: 'block', color: s.turquoise, fontWeight: 'bold', marginBottom: '0.5rem' }}>{label}</label>
-                  <input type={type} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} required
-                    style={{ width: '100%', padding: '0.8rem', borderRadius: '5px', border: '1px solid #ccc', background: 'rgba(255,255,255,0.9)', fontSize: '1rem', color: s.navy }} />
-                </div>
-              ))}
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ display: 'block', color: s.turquoise, fontWeight: 'bold', marginBottom: '0.5rem' }}>Description</label>
-                <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} required
-                  style={{ width: '100%', padding: '0.8rem', borderRadius: '5px', border: '1px solid #ccc', background: 'rgba(255,255,255,0.9)', fontSize: '1rem', color: s.navy, minHeight: '100px', resize: 'vertical' }} />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                <button type="button" onClick={() => { setShowForm(false); setEditingId(null) }} style={{ background: '#FF5252', color: 'white', border: 'none', borderRadius: '5px', padding: '0.8rem 1.5rem', cursor: 'pointer', fontWeight: 'bold' }}>Cancel</button>
-                <button type="submit" style={{ background: '#4CAF50', color: 'white', border: 'none', borderRadius: '5px', padding: '0.8rem 1.5rem', cursor: 'pointer', fontWeight: 'bold' }}>Save Event</button>
-              </div>
-            </form>
+    <div style={{ ...panel, marginBottom: '1.25rem' }}>
+      <h3 style={panelTitle}>{isEdit ? 'Edit event' : 'New event'}</h3>
+      <div style={{ display: 'grid', gap: '0.9rem' }}>
+        <div>
+          <label style={label} htmlFor="ev-title">Title</label>
+          <input id="ev-title" value={form.title} onChange={set('title')} maxLength={150} style={glassInput} placeholder="e.g. Sports Day" />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.9rem' }}>
+          <div>
+            <label style={label} htmlFor="ev-date">Date and time</label>
+            <input id="ev-date" type="datetime-local" value={form.date} onChange={set('date')} style={glassInput} />
           </div>
-        )}
-        {filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#ccc' }}>
-            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📅</div>
-            <p style={{ fontSize: '1.2rem' }}>No events scheduled yet.</p>
+          <div>
+            <label style={label} htmlFor="ev-type">Type</label>
+            <select id="ev-type" value={form.type} onChange={set('type')} style={glassInput}>
+              {types.map(t => <option key={t} value={t} style={{ color: '#000' }}>{t}</option>)}
+            </select>
           </div>
-        ) : filtered.map(event => (
-          <div key={event.id} style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '15px', marginBottom: '2rem', padding: '2rem', borderLeft: `4px solid ${s.turquoise}`, position: 'relative' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
-              <h2 style={{ fontSize: '1.8rem', color: s.turquoise }}>{event.title}</h2>
-              <div style={{ position: 'relative' }}>
-                <button onClick={() => setOpenEventMenu(openEventMenu === event.id ? null : event.id)} style={{ background: 'none', border: 'none', color: s.turquoise, fontSize: '1.5rem', cursor: 'pointer', padding: '0.5rem', borderRadius: '50%' }}>⋯</button>
-                {openEventMenu === event.id && (
-                  <div style={{ position: 'absolute', right: '1rem', top: '2rem', background: s.turquoise, borderRadius: '10px', minWidth: '150px', zIndex: 2, overflow: 'hidden' }}>
-                    <div onClick={() => editEvent(event)} style={{ color: s.navy, padding: '12px 16px', cursor: 'pointer', fontWeight: 'bold' }}>Edit Event</div>
-                    <div onClick={() => deleteEvent(event.id)} style={{ color: '#FF5252', padding: '12px 16px', cursor: 'pointer', fontWeight: 'bold' }}>Cancel Event</div>
-                  </div>
+        </div>
+        <div>
+          <label style={label} htmlFor="ev-loc">Location (optional)</label>
+          <input id="ev-loc" value={form.location} onChange={set('location')} maxLength={150} style={glassInput} placeholder="e.g. Main hall" />
+        </div>
+        <div>
+          <label style={label} htmlFor="ev-desc">Description (optional)</label>
+          <textarea id="ev-desc" value={form.description} onChange={set('description')} maxLength={2000} rows={4}
+            style={{ ...glassInput, resize: 'vertical', fontFamily: 'inherit' }} />
+        </div>
+      </div>
+
+      {error && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginTop: '0.75rem' }}>{error}</p>}
+
+      <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem' }}>
+        <button disabled={saving} onClick={() => onSave(form)} style={smallBtn}>{saving ? 'Saving...' : isEdit ? 'Save changes' : 'Create event'}</button>
+        <button disabled={saving} onClick={onCancel} style={ghostBtn}>Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+export default function PrincipalEvents() {
+  const { data, loading, error, reload } = useApiData('/api/principal/events')
+  const [view, setView] = useState('Upcoming')
+  const [formMode, setFormMode] = useState(null)   // null | 'new' | event id being edited
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [actionError, setActionError] = useState('')
+
+  const types = data?.types || FALLBACK_TYPES
+  const all = data?.events || []
+  const now = Date.now()
+  const upcoming = all.filter(e => new Date(e.date).getTime() >= now).sort((a, b) => new Date(a.date) - new Date(b.date))
+  const past = all.filter(e => new Date(e.date).getTime() < now)   // already newest first
+  const list = view === 'Upcoming' ? upcoming : past
+
+  const save = async (form) => {
+    setSaving(true); setFormError('')
+    try {
+      if (!form.date) throw new Error('Please choose a date and time.')
+      const body = { ...form, date: new Date(form.date).toISOString() }
+      if (formMode === 'new') await apiFetch('/api/principal/events', { method: 'POST', body })
+      else await apiFetch(`/api/principal/events/${formMode}`, { method: 'PUT', body })
+      setFormMode(null)
+      await reload()
+    } catch (err) {
+      setFormError(err.message)
+    }
+    setSaving(false)
+  }
+
+  const remove = async (id) => {
+    setActionError('')
+    try {
+      await apiFetch(`/api/principal/events/${id}`, { method: 'DELETE' })
+      setConfirmDelete(null)
+      await reload()
+    } catch (err) {
+      setActionError(err.message)
+    }
+  }
+
+  const editing = formMode && formMode !== 'new' ? all.find(e => e.id === formMode) : null
+
+  return (
+    <StudentPage title="School Events" icon="📅" backPath="/principal/dashboard">
+      {loading && !data && <p style={muted}>Loading...</p>}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+
+      {data && (
+        <>
+          {formMode ? (
+            <EventForm
+              key={formMode}
+              isEdit={formMode !== 'new'}
+              initial={editing
+                ? { title: editing.title || '', date: toLocalInput(editing.date), location: editing.location || '', type: editing.type || 'General', description: editing.description || '' }
+                : EMPTY}
+              types={types} saving={saving} error={formError}
+              onSave={save} onCancel={() => { setFormMode(null); setFormError('') }}
+            />
+          ) : (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <button onClick={() => { setFormMode('new'); setFormError('') }} style={smallBtn}>+ New event</button>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+            {['Upcoming', 'Past'].map(v => (
+              <button key={v} onClick={() => setView(v)}
+                style={{
+                  cursor: 'pointer', padding: '0.5rem 1.1rem', borderRadius: '999px', color: 'white', fontSize: '0.9rem',
+                  fontWeight: view === v ? 700 : 400,
+                  border: view === v ? '1px solid rgba(var(--color-primary-rgb),0.9)' : '1px solid rgba(255,255,255,0.2)',
+                  background: view === v ? 'rgba(var(--color-primary-rgb),0.25)' : 'rgba(255,255,255,0.06)',
+                }}>
+                {v} ({v === 'Upcoming' ? upcoming.length : past.length})
+              </button>
+            ))}
+          </div>
+
+          {actionError && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginBottom: '1rem' }}>{actionError}</p>}
+
+          {list.length === 0 ? (
+            <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
+              {view === 'Upcoming' ? 'No upcoming events. Create one and everyone at your school will see it.' : 'No past events.'}
+            </div>
+          ) : list.map(ev => (
+            <div key={ev.id} style={{ ...panel, marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700 }}>{ev.title}</span>
+                {ev.type && <Chip color="#8fd3ff">{ev.type}</Chip>}
+              </div>
+              <div style={{ ...muted, fontSize: '0.85rem', marginTop: '0.3rem' }}>
+                {fmtDate(ev.date)}{ev.location ? ` · ${ev.location}` : ''}
+              </div>
+              {ev.description && <p style={{ ...muted, marginTop: '0.5rem' }}>{ev.description}</p>}
+
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.9rem', flexWrap: 'wrap' }}>
+                {confirmDelete === ev.id ? (
+                  <>
+                    <span style={{ fontSize: '0.85rem', color: '#ffaaaa' }}>Delete this event for everyone?</span>
+                    <button onClick={() => remove(ev.id)} style={{ ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }}>Yes, delete</button>
+                    <button onClick={() => setConfirmDelete(null)} style={ghostBtn}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => { setFormMode(ev.id); setFormError(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }} style={ghostBtn}>Edit</button>
+                    <button onClick={() => setConfirmDelete(ev.id)} style={{ ...ghostBtn, color: '#ff8a8a', border: '1px solid rgba(255,80,80,0.5)' }}>Delete</button>
+                  </>
                 )}
               </div>
             </div>
-            {[['Date', new Date(event.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })], ['Time', event.time || 'Not specified'], ['Venue', event.venue], ['Description', event.description]].map(([label, val]) => (
-              <div key={label} style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'flex-start' }}>
-                <span style={{ fontWeight: 'bold', color: s.turquoise, minWidth: '100px' }}>{label}:</span>
-                <span>{val}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
-          <button onClick={() => { setShowForm(true); setEditingId(null); setForm({ title: '', date: '', time: '', venue: '', description: '' }); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
-            style={{ background: '#4CAF50', color: 'white', border: 'none', borderRadius: '50px', padding: '1rem 2rem', fontSize: '1.2rem', fontWeight: 'bold', cursor: 'pointer' }}>
-            + Add Event
-          </button>
-        </div>
-      </div>
-    </div>
+          ))}
+        </>
+      )}
+    </StudentPage>
   )
 }
