@@ -1557,6 +1557,362 @@ app.post('/api/admin/link-requests/:id/remove', verifyToken, requireAdmin, async
   }
 })
 
+// ---------- Principal routes (Phase 12) ----------
+// Every route is tied to the signed-in principal's own school (users.org_id). Nothing here accepts
+// an org id from the browser, so a principal can never read or change another school's data.
+const principalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+const DEFAULT_RISK_THRESHOLD = 50
+const EVENT_TYPES = ['General', 'Academic', 'Sports', 'Meeting', 'Holiday', 'Other']
+const PAGE_SIZE = 1000
+
+async function principalOrFail(req, res) {
+  const user = await loadUserWithRole(req.user, 'principal')
+  if (!user) { res.status(403).json({ error: 'Principals only' }); return null }
+  if (!user.org_id) { res.status(400).json({ error: 'Your account is not linked to a school yet.' }); return null }
+  return user
+}
+
+// Supabase returns at most 1000 rows per request, so large schools need paging
+async function fetchAllRows(build) {
+  const out = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await build().range(from, from + PAGE_SIZE - 1)
+    if (error) throw error
+    out.push(...(data || []))
+    if (!data || data.length < PAGE_SIZE) break
+  }
+  return out
+}
+
+// `.in()` with hundreds of ids makes the request URL too long, so ids go in batches of 100.
+// orderCols must identify rows uniquely so paging is stable.
+async function fetchIn(table, select, column, values, orderCols = ['id']) {
+  const unique = [...new Set((values || []).filter(Boolean))]
+  const out = []
+  for (let i = 0; i < unique.length; i += 100) {
+    const chunk = unique.slice(i, i + 100)
+    const rows = await fetchAllRows(() => {
+      let q = supabase.from(table).select(select).in(column, chunk)
+      for (const col of orderCols) q = q.order(col)
+      return q
+    })
+    out.push(...rows)
+  }
+  return out
+}
+
+async function countOrgUsers(orgId, role) {
+  const { count, error } = await supabase.from('users')
+    .select('id', { count: 'exact', head: true }).eq('org_id', orgId).eq('role', role)
+  if (error) throw error
+  return count || 0
+}
+
+const round1 = (n) => Math.round(n * 10) / 10
+
+// School-wide numbers. Grades are assumed to be out of 100. A grade only counts while the student
+// is still in the class the assignment belongs to (same rule as the teacher pages).
+async function computeSchoolStats(orgId, threshold) {
+  const classRows = await fetchAllRows(() =>
+    supabase.from('classes').select('id, name, grade').eq('org_id', orgId).order('id'))
+  const classIds = classRows.map(c => c.id)
+
+  const [studentRows, assignments] = await Promise.all([
+    fetchIn('students', 'user_id, class_id', 'class_id', classIds),
+    fetchIn('assignments', 'id, class_id', 'class_id', classIds),
+  ])
+  const subs = await fetchIn('submissions', 'assignment_id, student_id, grade', 'assignment_id', assignments.map(a => a.id))
+
+  const studentClass = Object.fromEntries(studentRows.map(r => [r.user_id, r.class_id]))
+  const assignmentClass = Object.fromEntries(assignments.map(a => [a.id, a.class_id]))
+
+  const perClass = Object.fromEntries(classRows.map(c => [c.id, { students: 0, assignments: 0, graded: 0, sum: 0 }]))
+  for (const r of studentRows) if (perClass[r.class_id]) perClass[r.class_id].students += 1
+  for (const a of assignments) if (perClass[a.class_id]) perClass[a.class_id].assignments += 1
+
+  const perStudent = {}
+  let totalSum = 0
+  let totalGraded = 0
+  for (const sub of subs) {
+    const classId = assignmentClass[sub.assignment_id]
+    if (!classId || studentClass[sub.student_id] !== classId) continue
+    if (!hasNumericGrade(sub)) continue
+    const g = Number(sub.grade)
+    perClass[classId].graded += 1
+    perClass[classId].sum += g
+    const st = (perStudent[sub.student_id] ||= { classId, sum: 0, count: 0 })
+    st.sum += g
+    st.count += 1
+    totalSum += g
+    totalGraded += 1
+  }
+
+  const atRiskRaw = Object.entries(perStudent)
+    .map(([studentId, st]) => ({ studentId, classId: st.classId, average: round1(st.sum / st.count), gradedCount: st.count }))
+    .filter(s => s.average < threshold)
+    .sort((a, b) => a.average - b.average)
+
+  const atRiskByClass = {}
+  for (const s of atRiskRaw) atRiskByClass[s.classId] = (atRiskByClass[s.classId] || 0) + 1
+
+  const classes = sortClasses(classRows.map(c => {
+    const p = perClass[c.id]
+    return {
+      ...shapeClass(c),
+      students: p.students,
+      assignments: p.assignments,
+      graded: p.graded,
+      average: p.graded ? round1(p.sum / p.graded) : null,
+      atRisk: atRiskByClass[c.id] || 0,
+    }
+  }))
+
+  // Group by grade (assignments carry no subject yet, so grade level is the breakdown available)
+  const byGradeMap = {}
+  for (const c of classes) {
+    const key = c.grade || '—'
+    const g = (byGradeMap[key] ||= { grade: key, students: 0, graded: 0, sum: 0 })
+    g.students += c.students
+    g.graded += c.graded
+    g.sum += (c.average ?? 0) * c.graded
+  }
+  const grades = Object.values(byGradeMap)
+    .map(g => ({ grade: g.grade, students: g.students, graded: g.graded, average: g.graded ? round1(g.sum / g.graded) : null }))
+    .sort((a, b) => (Number(a.grade) || 0) - (Number(b.grade) || 0))
+
+  const shown = atRiskRaw.slice(0, 100)
+  const people = await usersById(shown.map(s => s.studentId))
+  const classLabelById = Object.fromEntries(classes.map(c => [c.id, c.name]))
+  const atRisk = shown.map(s => ({
+    studentId: s.studentId,
+    name: displayName(people[s.studentId]),
+    className: classLabelById[s.classId] || '',
+    average: s.average,
+    gradedCount: s.gradedCount,
+  }))
+
+  return {
+    average: totalGraded ? round1(totalSum / totalGraded) : null,
+    gradedCount: totalGraded,
+    classes,
+    grades,
+    atRisk,
+    atRiskTotal: atRiskRaw.length,
+  }
+}
+
+async function orgCounts(orgId) {
+  const [students, teachers, parents, classRes] = await Promise.all([
+    countOrgUsers(orgId, 'student'),
+    countOrgUsers(orgId, 'teacher'),
+    countOrgUsers(orgId, 'parent'),
+    supabase.from('classes').select('id', { count: 'exact', head: true }).eq('org_id', orgId),
+  ])
+  if (classRes.error) throw classRes.error
+  return { students, teachers, parents, classes: classRes.count || 0 }
+}
+
+app.get('/api/principal/overview', verifyToken, principalLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    const nowIso = new Date().toISOString()
+
+    const [orgRes, counts, stats, eventsRes] = await Promise.all([
+      supabase.from('organizations').select('id, name').eq('id', user.org_id).maybeSingle(),
+      orgCounts(user.org_id),
+      computeSchoolStats(user.org_id, DEFAULT_RISK_THRESHOLD),
+      supabase.from('events').select('id, title, date, location, type')
+        .eq('org_id', user.org_id).gte('date', nowIso).order('date', { ascending: true }).limit(5),
+    ])
+
+    res.json({
+      org: orgRes.data || null,
+      isVerified: !!user.is_verified,
+      counts,
+      average: stats.average,
+      gradedCount: stats.gradedCount,
+      atRiskCount: stats.atRiskTotal,
+      riskThreshold: DEFAULT_RISK_THRESHOLD,
+      events: eventsRes.data || [],
+    })
+  } catch (err) {
+    console.error('Principal overview error:', err)
+    res.status(500).json({ error: 'Could not load the school overview. Please try again.' })
+  }
+})
+
+app.get('/api/principal/stats', verifyToken, principalLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+
+    let threshold = Number(req.query.threshold)
+    if (!Number.isFinite(threshold)) threshold = DEFAULT_RISK_THRESHOLD
+    threshold = Math.min(100, Math.max(1, Math.round(threshold)))
+
+    const [counts, stats] = await Promise.all([orgCounts(user.org_id), computeSchoolStats(user.org_id, threshold)])
+    res.json({ threshold, counts, ...stats })
+  } catch (err) {
+    console.error('Principal stats error:', err)
+    res.status(500).json({ error: 'Could not load the school statistics. Please try again.' })
+  }
+})
+
+// Teachers with their class loads, plus other school staff
+app.get('/api/principal/staff', verifyToken, principalLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+
+    const [teacherUsers, memberUsers, classRows] = await Promise.all([
+      fetchAllRows(() => supabase.from('users').select('id, name, email, is_verified')
+        .eq('org_id', user.org_id).eq('role', 'teacher').order('name').order('id')),
+      fetchAllRows(() => supabase.from('users').select('id, name, email, is_verified')
+        .eq('org_id', user.org_id).eq('role', 'schoolmember').order('name').order('id')),
+      fetchAllRows(() => supabase.from('classes').select('id, name, grade').eq('org_id', user.org_id).order('id')),
+    ])
+
+    const classById = Object.fromEntries(classRows.map(c => [c.id, c]))
+    const [links, studentRows, memberRows] = await Promise.all([
+      fetchIn('teacher_classes', 'teacher_id, class_id', 'teacher_id', teacherUsers.map(t => t.id), ['teacher_id', 'class_id']),
+      fetchIn('students', 'class_id', 'class_id', classRows.map(c => c.id)),
+      fetchIn('school_members', 'user_id, department', 'user_id', memberUsers.map(m => m.id), ['user_id']),
+    ])
+
+    const studentsInClass = {}
+    for (const r of studentRows) studentsInClass[r.class_id] = (studentsInClass[r.class_id] || 0) + 1
+
+    const classesOf = {}
+    for (const l of links) {
+      const c = classById[l.class_id]
+      if (c) (classesOf[l.teacher_id] ||= []).push(c)   // ignore links to classes at other schools
+    }
+
+    const teachers = teacherUsers.map(t => {
+      const list = sortClasses((classesOf[t.id] || []).map(shapeClass))
+      return {
+        id: t.id,
+        name: displayName(t),
+        email: t.email || '',
+        isVerified: !!t.is_verified,
+        classes: list.map(c => c.name),
+        classCount: list.length,
+        studentCount: list.reduce((n, c) => n + (studentsInClass[c.id] || 0), 0),
+      }
+    })
+
+    const departments = Object.fromEntries(memberRows.map(r => [r.user_id, r.department]))
+    const members = memberUsers.map(m => ({
+      id: m.id,
+      name: displayName(m),
+      email: m.email || '',
+      isVerified: !!m.is_verified,
+      department: departments[m.id] || null,
+    }))
+
+    res.json({ teachers, members })
+  } catch (err) {
+    console.error('Principal staff error:', err)
+    res.status(500).json({ error: 'Could not load the staff list. Please try again.' })
+  }
+})
+
+// ----- Principal events -----
+
+function cleanEventInput(body) {
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  if (!title) return { error: 'Please give the event a title.' }
+  if (title.length > 150) return { error: 'The title is too long (max 150 characters).' }
+  const description = typeof body.description === 'string' ? body.description.trim() : ''
+  if (description.length > 2000) return { error: 'The description is too long (max 2000 characters).' }
+  const location = typeof body.location === 'string' ? body.location.trim() : ''
+  if (location.length > 150) return { error: 'The location is too long (max 150 characters).' }
+  const type = EVENT_TYPES.includes(body.type) ? body.type : 'General'
+  if (!body.date) return { error: 'Please choose a date and time.' }
+  const d = new Date(body.date)
+  if (Number.isNaN(d.getTime())) return { error: 'That date is not valid.' }
+  return { title, description: description || null, location: location || null, type, date: d.toISOString() }
+}
+
+app.get('/api/principal/events', verifyToken, principalLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    const { data, error } = await supabase.from('events')
+      .select('id, title, description, date, location, type, created_by')
+      .eq('org_id', user.org_id).order('date', { ascending: false }).limit(300)
+    if (error) throw error
+    res.json({ events: data || [], types: EVENT_TYPES })
+  } catch (err) {
+    console.error('Principal events error:', err)
+    res.status(500).json({ error: 'Could not load events. Please try again.' })
+  }
+})
+
+app.post('/api/principal/events', verifyToken, principalLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    const input = cleanEventInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+
+    const { data, error } = await supabase.from('events')
+      .insert({ ...input, org_id: user.org_id, created_by: user.id }).select('id').single()
+    if (error) throw error
+    res.json({ success: true, id: data.id })
+  } catch (err) {
+    console.error('Create event error:', err)
+    res.status(500).json({ error: 'Could not save the event. Please try again.' })
+  }
+})
+
+app.put('/api/principal/events/:id', verifyToken, principalLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Event not found.' })
+    const input = cleanEventInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+
+    // org_id in the filter means another school's event can never be edited
+    const { data, error } = await supabase.from('events')
+      .update(input).eq('id', req.params.id).eq('org_id', user.org_id).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'Event not found.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Update event error:', err)
+    res.status(500).json({ error: 'Could not save your changes. Please try again.' })
+  }
+})
+
+app.delete('/api/principal/events/:id', verifyToken, principalLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Event not found.' })
+
+    const { data, error } = await supabase.from('events')
+      .delete().eq('id', req.params.id).eq('org_id', user.org_id).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'Event not found.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Delete event error:', err)
+    res.status(500).json({ error: 'Could not delete the event. Please try again.' })
+  }
+})
+
 app.listen(PORT, () => {
   console.log(`Montemy API running on port ${PORT}`)
 })
