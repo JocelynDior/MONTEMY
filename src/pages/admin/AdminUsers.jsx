@@ -1,188 +1,214 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { db } from '../../supabase/client'
+import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import StudentPage from '../../components/student/StudentPage'
+import { Chip, ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../components/parent/parentUi'
+import { apiFetch } from '../../api/apiClient'
+import { useApiData } from '../../hooks/useApiData'
+import { useAuth } from '../../context/AuthContext'
+import { glassInput } from '../../styles/glass'
 
-const COLLECTIONS = ['students', 'teachers', 'parents', 'principals', 'staff']
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
+const ROLES = [
+  ['student', 'Students'], ['teacher', 'Teachers'], ['parent', 'Parents'], ['principal', 'Principals'],
+  ['tutor', 'Tutors'], ['schoolmember', 'School members'], ['admin', 'Admins'],
+]
+// Older links used plural names, e.g. /admin/users?type=students
+const LEGACY_ROLE = { students: 'student', teachers: 'teacher', parents: 'parent', principals: 'principal', tutors: 'tutor', staff: 'schoolmember' }
+const roleLabel = (r) => (ROLES.find(([k]) => k === r) || [r, r])[1].replace(/s$/, '')
+const dangerBtn = { ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }
+const selectStyle = { ...glassInput, width: 'auto', minWidth: '150px' }
 
 export default function AdminUsers() {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const [users, setUsers] = useState([])
-  const [filtered, setFiltered] = useState([])
+  const { user: me } = useAuth()
+  const [params] = useSearchParams()
+  const legacy = params.get('type')
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
-  const [roleFilter, setRoleFilter] = useState(searchParams.get('type') || '')
-  const [schoolFilter] = useState(searchParams.get('school') || '')
-  const [loading, setLoading] = useState(true)
-  const [deleteModal, setDeleteModal] = useState(null)
-  const [openMenu, setOpenMenu] = useState(null)
+  const [role, setRole] = useState(ROLES.some(([k]) => k === legacy) ? legacy : (LEGACY_ROLE[legacy] || ''))
+  const [orgId, setOrgId] = useState(params.get('school') || '')
+  const [status, setStatus] = useState('')
+  const [page, setPage] = useState(1)
+  const [confirm, setConfirm] = useState(null)       // { id, kind: 'delete' }
+  const [confirmBulk, setConfirmBulk] = useState(false)
+  const [busyId, setBusyId] = useState(null)
+  const [notice, setNotice] = useState('')
+  const [actionError, setActionError] = useState('')
 
-  useEffect(() => { loadUsers() }, [])
-
+  // Search 500ms after typing stops; any filter change goes back to page 1
   useEffect(() => {
-    const term = search.toLowerCase()
-    setFiltered(users.filter(u => {
-      const matchSearch = !term || u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term) || u.schoolName.toLowerCase().includes(term)
-      const matchRole = !roleFilter || u.collection === roleFilter
-      const matchSchool = !schoolFilter || u.schoolId === schoolFilter
-      return matchSearch && matchRole && matchSchool
-    }))
-  }, [search, roleFilter, users])
+    const t = setTimeout(() => { setSearch(searchInput.trim()); setPage(1) }, 500)
+    return () => clearTimeout(t)
+  }, [searchInput])
 
-  const loadUsers = async () => {
-    setLoading(true)
-    const all = []
-    for (const col of COLLECTIONS) {
-      try {
-        const snap = await getDocs(collection(db, col))
-        snap.forEach(d => {
-          const data = d.data()
-          const name = data.name || data.fullName ||
-            (data.parentFirstName ? `${data.parentFirstName} ${data.parentLastName}` : '') ||
-            `${data.firstName || ''} ${data.lastName || data.LastName || ''}`.trim() || 'No Name'
-          all.push({
-            id: d.id, collection: col,
-            name, email: data.email || 'No Email',
-            schoolName: data.schoolName || data.schoolId || 'Unknown',
-            schoolId: data.schoolId || '',
-            isVerified: data.isVerified !== undefined ? data.isVerified : true,
-            grade: data.grade || '', class: data.class || '',
-            subjects: data.subjects || [], role: col
-          })
-        })
-      } catch (err) { console.error(err) }
+  const filterQuery = () => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (role) q.set('role', role)
+    if (orgId) q.set('orgId', orgId)
+    if (status === 'verified') q.set('verified', 'true')
+    if (status === 'pending') q.set('verified', 'false')
+    if (status === 'suspended') q.set('suspended', 'true')
+    return q
+  }
+  const listQuery = filterQuery()
+  listQuery.set('page', String(page))
+
+  const orgsReq = useApiData('/api/admin/orgs')
+  const { data, loading, error, reload } = useApiData(`/api/admin/users?${listQuery.toString()}`)
+  const orgs = orgsReq.data?.orgs || []
+
+  const changeFilter = (setter) => (e) => { setter(e.target.value); setPage(1); setConfirmBulk(false) }
+
+  const run = async (id, fn, okMessage) => {
+    setBusyId(id); setActionError(''); setNotice('')
+    try {
+      await fn()
+      if (okMessage) setNotice(okMessage)
+      setConfirm(null)
+      await reload()
+    } catch (err) {
+      setActionError(err.message)
     }
-    setUsers(all)
-    setFiltered(all)
-    setLoading(false)
+    setBusyId(null)
   }
 
-  const deleteUser = async () => {
+  const act = (u, action, msg) => run(u.id, () =>
+    apiFetch(`/api/admin/users/${u.id}/action`, { method: 'POST', body: { action } }), msg)
+  const remove = (u) => run(u.id, () => apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' }), `${u.name || u.email} was deleted.`)
+
+  const verifyAll = async () => {
+    setBusyId('bulk'); setActionError(''); setNotice('')
     try {
-      await deleteDoc(doc(db, deleteModal.collection, deleteModal.id))
-      setUsers(prev => prev.filter(u => !(u.id === deleteModal.id && u.collection === deleteModal.collection)))
-      setDeleteModal(null)
-    } catch (err) { alert('Error: ' + err.message) }
+      const r = await apiFetch(`/api/admin/orgs/${orgId}/verify-all`, { method: 'POST' })
+      setNotice(r.count === 0 ? 'Nobody was waiting in that organisation.' : `${r.count} user${r.count === 1 ? '' : 's'} verified.`)
+      setConfirmBulk(false)
+      await reload()
+    } catch (err) {
+      setActionError(err.message)
+    }
+    setBusyId(null)
   }
 
-  const toggleVerify = async (user) => {
+  const exportCsv = async () => {
+    setBusyId('export'); setActionError(''); setNotice('')
     try {
-      await updateDoc(doc(db, user.collection, user.id), { isVerified: !user.isVerified })
-      setUsers(prev => prev.map(u => u.id === user.id && u.collection === user.collection ? { ...u, isVerified: !u.isVerified } : u))
-    } catch (err) { alert('Error: ' + err.message) }
+      const r = await apiFetch(`/api/admin/users/export?${filterQuery().toString()}`)
+      const blob = new Blob(['\uFEFF' + r.csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `montemy-users-${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      setNotice(`Exported ${r.count} user${r.count === 1 ? '' : 's'}${r.truncated ? ' (the first 10,000 only: narrow the filters for the rest)' : ''}.`)
+    } catch (err) {
+      setActionError(err.message)
+    }
+    setBusyId(null)
   }
 
-  const stats = COLLECTIONS.reduce((acc, col) => {
-    acc[col] = users.filter(u => u.collection === col).length
-    return acc
-  }, {})
+  const users = data?.users || []
 
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }} onClick={() => setOpenMenu(null)}>
-
-      {/* Navbar */}
-      <nav style={{ background: s.turquoise, padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ color: s.navy, fontSize: '1.2rem', fontWeight: 'bold' }}>MONTEMY ADMIN</div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => navigate('/admin/dashboard')} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Dashboard</button>
-          <button onClick={() => navigate('/admin/chat')} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Support Chat</button>
-        </div>
-      </nav>
-
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
-        <h2 style={{ color: s.turquoise, marginBottom: '1rem', fontSize: '1.5rem' }}>Manage Users</h2>
-
-        {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-          {COLLECTIONS.map(col => (
-            <div key={col} style={{ background: 'rgba(255,255,255,0.1)', padding: '1rem', borderRadius: '8px', borderLeft: `4px solid ${s.turquoise}`, textAlign: 'center' }}>
-              <div style={{ fontSize: '1.5rem', color: s.turquoise, fontWeight: 'bold' }}>{stats[col]}</div>
-              <div style={{ fontSize: '0.8rem', color: '#ccc', textTransform: 'capitalize' }}>{col}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Filters */}
-        <div style={{ background: 'rgba(255,255,255,0.1)', padding: '1rem', borderRadius: '10px', marginBottom: '1.5rem' }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, email or school..."
-            style={{ width: '100%', padding: '0.8rem', border: `2px solid ${s.turquoise}`, borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '1rem', marginBottom: '1rem', boxSizing: 'border-box' }} />
-          <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
-            style={{ padding: '0.8rem', border: `2px solid ${s.turquoise}`, borderRadius: '8px', background: s.navy, color: 'white', fontSize: '1rem' }}>
-            <option value="">All Roles</option>
-            {COLLECTIONS.map(col => <option key={col} value={col}>{col.charAt(0).toUpperCase() + col.slice(1)}</option>)}
+    <StudentPage title="Users" icon="👥" backPath="/admin/dashboard" maxWidth={1100}>
+      <div style={{ ...panel, marginBottom: '1.25rem', display: 'grid', gap: '0.9rem' }}>
+        <input value={searchInput} onChange={e => setSearchInput(e.target.value)} style={glassInput}
+          placeholder="Search by name, or type an email address" aria-label="Search users" />
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={role} onChange={changeFilter(setRole)} style={selectStyle} aria-label="Filter by role">
+            <option value="" style={{ color: '#000' }}>All roles</option>
+            {ROLES.map(([k, l]) => <option key={k} value={k} style={{ color: '#000' }}>{l}</option>)}
           </select>
+          <select value={orgId} onChange={changeFilter(setOrgId)} style={selectStyle} aria-label="Filter by organisation">
+            <option value="" style={{ color: '#000' }}>All organisations</option>
+            {orgs.map(o => <option key={o.id} value={o.id} style={{ color: '#000' }}>{o.name}</option>)}
+          </select>
+          <select value={status} onChange={changeFilter(setStatus)} style={selectStyle} aria-label="Filter by status">
+            <option value="" style={{ color: '#000' }}>Any status</option>
+            <option value="verified" style={{ color: '#000' }}>Verified</option>
+            <option value="pending" style={{ color: '#000' }}>Waiting for approval</option>
+            <option value="suspended" style={{ color: '#000' }}>Suspended</option>
+          </select>
+          <button onClick={exportCsv} disabled={busyId === 'export'} style={{ ...ghostBtn, marginLeft: 'auto' }}>
+            {busyId === 'export' ? 'Exporting...' : 'Export CSV'}
+          </button>
         </div>
 
-        {/* Users List */}
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '2rem', color: s.turquoise }}>Loading users...</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '2rem', color: '#888', fontStyle: 'italic' }}>No users found.</div>
-        ) : filtered.map(user => (
-          <div key={`${user.id}-${user.collection}`} style={{ background: 'rgba(255,255,255,0.1)', padding: '1.2rem', borderRadius: '10px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '1rem', position: 'relative' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-              <div>
-                <div style={{ color: s.turquoise, fontSize: '1.2rem', fontWeight: 'bold' }}>{user.name}</div>
-                <span style={{ background: 'rgba(var(--color-primary-rgb),0.2)', color: s.turquoise, padding: '0.2rem 0.8rem', borderRadius: '15px', fontSize: '0.8rem', textTransform: 'capitalize' }}>{user.collection}</span>
-                <span style={{ background: user.isVerified ? '#2ecc71' : '#e74c3c', color: 'white', padding: '0.2rem 0.8rem', borderRadius: '15px', fontSize: '0.8rem', marginLeft: '0.5rem' }}>
-                  {user.isVerified ? 'Verified' : 'Not Verified'}
-                </span>
-              </div>
-
-              {/* Options Menu */}
-              <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
-                <button onClick={() => setOpenMenu(openMenu === user.id ? null : user.id)}
-                  style={{ background: 'none', border: 'none', color: s.turquoise, fontSize: '1.2rem', cursor: 'pointer', padding: '0.5rem' }}>⋯</button>
-                {openMenu === user.id && (
-                  <div style={{ position: 'absolute', top: '100%', right: 0, background: s.navy, border: `1px solid ${s.turquoise}`, borderRadius: '8px', padding: '0.5rem', minWidth: '180px', zIndex: 100 }}>
-                    <button onClick={() => { toggleVerify(user); setOpenMenu(null) }}
-                      style={{ display: 'block', width: '100%', padding: '0.6rem 1rem', background: 'none', border: 'none', color: 'white', cursor: 'pointer', textAlign: 'left', borderRadius: '5px' }}
-                      onMouseEnter={e => e.target.style.background = 'rgba(var(--color-primary-rgb),0.1)'}
-                      onMouseLeave={e => e.target.style.background = 'none'}>
-                      {user.isVerified ? '🔒 Unverify' : '✅ Verify'}
-                    </button>
-                    <button onClick={() => { setDeleteModal(user); setOpenMenu(null) }}
-                      style={{ display: 'block', width: '100%', padding: '0.6rem 1rem', background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', textAlign: 'left', borderRadius: '5px' }}
-                      onMouseEnter={e => e.target.style.background = 'rgba(231,76,60,0.1)'}
-                      onMouseLeave={e => e.target.style.background = 'none'}>
-                      🗑️ Delete User
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* User Details */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', fontSize: '0.9rem', color: '#ccc' }}>
-              <div>📧 {user.email}</div>
-              <div>🏫 {user.schoolName}</div>
-              {user.grade && <div>📖 Grade: {user.grade}</div>}
-              {user.class && <div>🏷️ Class: {user.class}</div>}
-              {user.subjects && user.subjects.length > 0 && <div>📚 {user.subjects.join(', ')}</div>}
-            </div>
+        {orgId && (
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {confirmBulk ? (
+              <>
+                <span style={{ fontSize: '0.88rem', color: '#ffe08a' }}>Verify everyone still waiting in this organisation?</span>
+                <button disabled={busyId === 'bulk'} onClick={verifyAll} style={smallBtn}>{busyId === 'bulk' ? 'Verifying...' : 'Yes, verify all'}</button>
+                <button onClick={() => setConfirmBulk(false)} style={ghostBtn}>Cancel</button>
+              </>
+            ) : (
+              <button onClick={() => setConfirmBulk(true)} style={ghostBtn}>Verify all pending in this organisation</button>
+            )}
           </div>
-        ))}
+        )}
       </div>
 
-      {/* Delete Confirmation Modal */}
-      {deleteModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div style={{ background: s.navy, border: `2px solid ${s.turquoise}`, borderRadius: '12px', padding: '2rem', maxWidth: '400px', width: '90%' }}>
-            <h3 style={{ color: s.turquoise, marginBottom: '1rem' }}>Delete User</h3>
-            <p style={{ color: '#ccc', marginBottom: '1.5rem' }}>Are you sure you want to delete <strong style={{ color: 'white' }}>{deleteModal.name}</strong>? This cannot be undone.</p>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button onClick={() => setDeleteModal(null)}
-                style={{ flex: 1, padding: '0.8rem', background: 'rgba(255,255,255,0.1)', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button onClick={deleteUser}
-                style={{ flex: 1, padding: '0.8rem', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Delete
-              </button>
+      {notice && <p style={{ color: '#7CFC9A', fontSize: '0.9rem', marginBottom: '1rem' }}>{notice}</p>}
+      {actionError && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginBottom: '1rem' }}>{actionError}</p>}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+      {loading && !data && <p style={muted}>Loading...</p>}
+
+      {data && (
+        <>
+          <p style={{ ...muted, marginBottom: '0.9rem' }}>{data.total} user{data.total === 1 ? '' : 's'}{loading ? ' (updating...)' : ''}</p>
+
+          {users.length === 0 ? (
+            <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>No users match these filters.</div>
+          ) : users.map(u => {
+            const isMe = u.id === me?.id
+            const protectedAccount = isMe || u.role === 'admin'
+            return (
+              <div key={u.id} style={{ ...panel, marginBottom: '0.9rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '240px' }}>
+                  <div style={{ fontWeight: 700 }}>{u.name || '(no name)'}{isMe ? <span style={muted}> (you)</span> : null}</div>
+                  <div style={muted}>{u.email}</div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.45rem' }}>
+                    <Chip color="#8fd3ff">{roleLabel(u.role)}</Chip>
+                    <Chip color={u.isVerified ? '#7CFC9A' : '#ffe08a'}>{u.isVerified ? 'Verified' : 'Waiting'}</Chip>
+                    {u.isSuspended && <Chip color="#ff8f8f">Suspended</Chip>}
+                    <span style={{ ...muted, fontSize: '0.78rem' }}>
+                      {u.orgName || 'No organisation'} · joined {new Date(u.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+
+                {!protectedAccount && (
+                  confirm?.id === u.id ? (
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.85rem', color: '#ffaaaa' }}>Delete permanently, with all their data?</span>
+                      <button disabled={busyId === u.id} onClick={() => remove(u)} style={dangerBtn}>{busyId === u.id ? '...' : 'Yes, delete'}</button>
+                      <button onClick={() => setConfirm(null)} style={ghostBtn}>Cancel</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {!u.isVerified && <button disabled={busyId === u.id} onClick={() => act(u, 'verify', `${u.name || u.email} was verified.`)} style={smallBtn}>Verify</button>}
+                      {u.isSuspended
+                        ? <button disabled={busyId === u.id} onClick={() => act(u, 'unsuspend', `${u.name || u.email} can sign in again.`)} style={ghostBtn}>Unsuspend</button>
+                        : <button disabled={busyId === u.id} onClick={() => act(u, 'suspend', `${u.name || u.email} was suspended.`)} style={ghostBtn}>Suspend</button>}
+                      <button onClick={() => setConfirm({ id: u.id })} style={{ ...ghostBtn, color: '#ff8a8a', border: '1px solid rgba(255,80,80,0.5)' }}>Delete</button>
+                    </div>
+                  )
+                )}
+              </div>
+            )
+          })}
+
+          {data.pages > 1 && (
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'center', marginTop: '1.25rem' }}>
+              <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} style={ghostBtn}>← Previous</button>
+              <span style={muted}>Page {data.page} of {data.pages}</span>
+              <button disabled={page >= data.pages} onClick={() => setPage(p => p + 1)} style={ghostBtn}>Next →</button>
             </div>
-          </div>
-        </div>
+          )}
+        </>
       )}
-    </div>
+    </StudentPage>
   )
 }
