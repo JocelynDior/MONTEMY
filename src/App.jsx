@@ -27,6 +27,7 @@ import ParentMyChild from './pages/parent/ParentMyChild'
 import PrincipalDashboard from './pages/principal/PrincipalDashboard'
 import PrincipalEvents from './pages/principal/PrincipalEvents'
 import PrincipalStats from './pages/principal/PrincipalStats'
+import PrincipalStaff from './pages/principal/PrincipalStaff'
 
 import TutorDashboard from './pages/tutor/TutorDashboard'
 import SchoolMemberDashboard from './pages/schoolmember/SchoolMemberDashboard'
@@ -82,6 +83,7 @@ export default function App() {
           <Route path="/principal/dashboard" element={guard('principal', <PrincipalDashboard />)} />
           <Route path="/principal/events" element={guard('principal', <PrincipalEvents />)} />
           <Route path="/principal/stats" element={guard('principal', <PrincipalStats />)} />
+          <Route path="/principal/staff" element={guard('principal', <PrincipalStaff />)} />
 
           {/* Tutor */}
           <Route path="/tutor/dashboard" element={guard('tutor', <TutorDashboard />)} />
