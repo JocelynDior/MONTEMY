@@ -121,7 +121,7 @@ export default function TeacherClasses() {
                 ) : c.students.map(s => (
                   <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                     <span>{s.name}</span>
-                    <span style={{ ...muted, fontSize: '0.8rem', overflowWrap: 'anywhere' }}>{s.email}</span>
+                    <span style={{ ...muted, fontSize: '0.8rem', overflowWrap: 'anywhere' }}>{s.username ? `@${s.username}` : ''}</span>
                   </div>
                 ))}
                 <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
