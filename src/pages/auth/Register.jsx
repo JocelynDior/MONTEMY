@@ -54,7 +54,9 @@ export default function Register() {
   const isAdmin = type === 'admin'
   const validRole = isAdmin || !!ROLE_TABLES[type]
 
-  const [form, setForm] = useState({ name: '', org: '', email: '', password: '', adminKey: '' })
+  const [form, setForm] = useState({ name: '', username: '', org: '', email: '', password: '', adminKey: '' })
+  // { state: 'idle' | 'checking' | 'ok' | 'bad', msg }
+  const [unameStatus, setUnameStatus] = useState({ state: 'idle', msg: '' })
   const [orgSearch, setOrgSearch] = useState('')
   const [orgs, setOrgs] = useState([])
   const [filteredOrgs, setFilteredOrgs] = useState([])
@@ -73,6 +75,32 @@ export default function Register() {
   useEffect(() => {
     if (!isAdmin) loadOrgs()
   }, [isAdmin])
+
+  // Check the username with the API shortly after the user stops typing
+  useEffect(() => {
+    if (isAdmin) return
+    const u = form.username.trim().toLowerCase()
+    if (!u) { setUnameStatus({ state: 'idle', msg: '' }); return }
+    if (!/^[a-z0-9._]{3,20}$/.test(u)) {
+      setUnameStatus({ state: 'bad', msg: 'Use 3-20 letters, numbers, "." or "_".' })
+      return
+    }
+    setUnameStatus({ state: 'checking', msg: 'Checking...' })
+    let cancelled = false
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/auth/username-available?u=${encodeURIComponent(u)}`)
+        const data = await res.json().catch(() => ({}))
+        if (cancelled) return
+        if (!res.ok) setUnameStatus({ state: 'idle', msg: '' }) // the server re-checks on submit
+        else if (data.available) setUnameStatus({ state: 'ok', msg: 'Username is available.' })
+        else setUnameStatus({ state: 'bad', msg: data.reason || 'That username is taken.' })
+      } catch {
+        if (!cancelled) setUnameStatus({ state: 'idle', msg: '' })
+      }
+    }, 400)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [form.username, isAdmin])
 
   const loadOrgs = async () => {
     const { data, error } = await supabase
@@ -107,6 +135,18 @@ export default function Register() {
 
     const email = form.email.trim().toLowerCase()
     const name = form.name.trim()
+    const username = form.username.trim().toLowerCase()
+
+    if (!isAdmin) {
+      if (!/^[a-z0-9._]{3,20}$/.test(username)) {
+        setError('Choose a username of 3-20 letters, numbers, "." or "_".')
+        return
+      }
+      if (unameStatus.state === 'bad') {
+        setError(unameStatus.msg)
+        return
+      }
+    }
 
     if (!isAdmin && !form.org) {
       setError('Please select a school or tutor organisation from the list.')
@@ -144,7 +184,7 @@ export default function Register() {
         const res = await fetch(`${API_URL}/api/auth/register-later`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, password: form.password, role: type, orgId: form.org, ...(isStudent ? { grade, subjects } : {}) }),
+          body: JSON.stringify({ name, username, email, password: form.password, role: type, orgId: form.org, ...(isStudent ? { grade, subjects } : {}) }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(data.error || 'Registration failed.')
@@ -163,7 +203,7 @@ export default function Register() {
         email,
         password: form.password,
         options: {
-          data: { name, role: type, org_id: form.org, ...(isStudent ? { grade, subjects } : {}) },
+          data: { name, username, role: type, org_id: form.org, ...(isStudent ? { grade, subjects } : {}) },
           emailRedirectTo: `${window.location.origin}/login`,
         },
       })
@@ -262,6 +302,21 @@ export default function Register() {
               <input className="reg-input" style={glassInput} value={form.name}
                 onChange={setField('name')} placeholder="Enter your full name" required />
             </div>
+
+            {!isAdmin && (
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label style={labelStyle}>Username</label>
+                <input className="reg-input" style={glassInput} value={form.username}
+                  onChange={e => setForm(f => ({ ...f, username: e.target.value.toLowerCase().replace(/\s+/g, '') }))}
+                  placeholder="e.g. thabo.m (shown to other users instead of your email)"
+                  maxLength={20} autoComplete="off" autoCapitalize="none" required />
+                {unameStatus.msg && (
+                  <div style={{ fontSize: '0.8rem', marginTop: '0.4rem', color: unameStatus.state === 'ok' ? '#7dffb0' : unameStatus.state === 'bad' ? '#ffaaaa' : 'rgba(255,255,255,0.5)' }}>
+                    {unameStatus.msg}
+                  </div>
+                )}
+              </div>
+            )}
 
             {!isAdmin && (
               <div style={{ marginBottom: '1.25rem', position: 'relative' }}>
