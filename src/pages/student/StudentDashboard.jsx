@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import DashboardShell from '../../components/layout/DashboardShell'
 import StudentProfileForm from '../../components/student/StudentProfileForm'
+import ParentLinks from '../../components/student/ParentLinks'
 import { useStudentOverview } from '../../hooks/useStudentOverview'
 import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
 import { glassCard, glassBtn, C } from '../../styles/glass'
@@ -148,6 +149,7 @@ function StudentSummary() {
 export default function StudentDashboard() {
   return (
     <DashboardShell role="student" cards={cards}>
+      <ParentLinks />
       <StudentSummary />
     </DashboardShell>
   )
