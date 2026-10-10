@@ -421,107 +421,111 @@ function titleCase(str) {
   return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : ''
 }
 
-// Everything the student dashboard + academics pages need, in one call
+// Builds the overview for one student. Shared by the student's own dashboard and the read-only
+// parent view, so both always show the same numbers.
+async function buildStudentOverview(user, student) {
+  const nowIso = new Date().toISOString()
+
+  const [orgRes, classRes, eventsRes] = await Promise.all([
+    user.org_id
+      ? supabase.from('organizations').select('id, name').eq('id', user.org_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    student?.class_id
+      ? supabase.from('classes').select('id, name, grade').eq('id', student.class_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    user.org_id
+      ? supabase.from('events').select('id, title, description, date, location, type')
+          .eq('org_id', user.org_id).gte('date', nowIso).order('date', { ascending: true }).limit(10)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const cls = classRes.data
+  let classInfo = null
+  let assignments = []
+  if (cls) {
+    const names = await teacherNamesByClass([cls.id])
+    classInfo = { ...shapeClass(cls), teacherName: names[cls.id] || null }
+    const { data } = await supabase
+      .from('assignments').select('id, class_id, title, description, due_date')
+      .eq('class_id', cls.id).order('due_date', { ascending: true })
+    assignments = data || []
+  }
+
+  // submissions.student_id references users.id
+  const { data: subRows } = await supabase
+    .from('submissions').select('id, assignment_id, grade, feedback, status, submitted_at')
+    .eq('student_id', user.id)
+
+  // Keep only the latest submission per assignment
+  const latest = {}
+  for (const sub of subRows || []) {
+    const prev = latest[sub.assignment_id]
+    if (!prev || new Date(sub.submitted_at) > new Date(prev.submitted_at)) latest[sub.assignment_id] = sub
+  }
+
+  // Titles for graded work, including assignments from a class the student has since left
+  const known = Object.fromEntries(assignments.map(a => [a.id, a]))
+  const extraIds = Object.keys(latest).filter(id => !known[id])
+  if (extraIds.length) {
+    const { data: extra } = await supabase.from('assignments').select('id, title, due_date').in('id', extraIds)
+    for (const a of extra || []) known[a.id] = a
+  }
+
+  const nowMs = Date.now()
+  const hasGrade = (sub) => sub && sub.grade !== null && sub.grade !== undefined && !Number.isNaN(Number(sub.grade))
+
+  const homework = assignments.map(a => {
+    const sub = latest[a.id]
+    const dueMs = a.due_date ? new Date(a.due_date).getTime() : null
+    let status = 'Not submitted'
+    if (hasGrade(sub)) status = 'Graded'
+    else if (sub) status = titleCase(sub.status) || 'Submitted'
+    else if (dueMs && dueMs < nowMs) status = 'Overdue'
+    return {
+      id: a.id,
+      title: a.title,
+      description: a.description || '',
+      dueDate: a.due_date,
+      status,
+      grade: hasGrade(sub) ? Number(sub.grade) : null,
+      feedback: sub?.feedback || null,
+    }
+  })
+
+  const graded = Object.values(latest)
+    .filter(hasGrade)
+    .map(sub => ({
+      assignmentId: sub.assignment_id,
+      title: known[sub.assignment_id]?.title || 'Assignment',
+      grade: Number(sub.grade),
+      feedback: sub.feedback || null,
+      date: sub.submitted_at,
+    }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+
+  const average = graded.length
+    ? Math.round((graded.reduce((t, g) => t + g.grade, 0) / graded.length) * 10) / 10
+    : null
+
+  const subjects = Array.isArray(student?.subjects) ? student.subjects : []
+  return {
+    profile: { name: user.name, grade: student?.grade ?? null, subjects, classId: student?.class_id ?? null, letter: cls?.name ?? null },
+    org: orgRes.data || null,
+    isVerified: !!user.is_verified,
+    classInfo,
+    homework,
+    graded,
+    average,
+    events: eventsRes.data || [],
+    needsSetup: !student?.grade || subjects.length === 0 || !student?.class_id,
+  }
+}
+
 app.get('/api/student/overview', verifyToken, studentLimiter, async (req, res) => {
   try {
     const ctx = await loadStudent(req.user)
     if (!ctx) return res.status(403).json({ error: 'Students only' })
-    const { user, student } = ctx
-    const nowIso = new Date().toISOString()
-
-    const [orgRes, classRes, eventsRes] = await Promise.all([
-      user.org_id
-        ? supabase.from('organizations').select('id, name').eq('id', user.org_id).maybeSingle()
-        : Promise.resolve({ data: null }),
-      student?.class_id
-        ? supabase.from('classes').select('id, name, grade').eq('id', student.class_id).maybeSingle()
-        : Promise.resolve({ data: null }),
-      user.org_id
-        ? supabase.from('events').select('id, title, description, date, location, type')
-            .eq('org_id', user.org_id).gte('date', nowIso).order('date', { ascending: true }).limit(10)
-        : Promise.resolve({ data: [] }),
-    ])
-
-    const cls = classRes.data
-    let classInfo = null
-    let assignments = []
-    if (cls) {
-      const names = await teacherNamesByClass([cls.id])
-      classInfo = { ...shapeClass(cls), teacherName: names[cls.id] || null }
-      const { data } = await supabase
-        .from('assignments').select('id, class_id, title, description, due_date')
-        .eq('class_id', cls.id).order('due_date', { ascending: true })
-      assignments = data || []
-    }
-
-    // submissions.student_id references users.id
-    const { data: subRows } = await supabase
-      .from('submissions').select('id, assignment_id, grade, feedback, status, submitted_at')
-      .eq('student_id', user.id)
-
-    // Keep only the latest submission per assignment
-    const latest = {}
-    for (const sub of subRows || []) {
-      const prev = latest[sub.assignment_id]
-      if (!prev || new Date(sub.submitted_at) > new Date(prev.submitted_at)) latest[sub.assignment_id] = sub
-    }
-
-    // Titles for graded work, including assignments from a class the student has since left
-    const known = Object.fromEntries(assignments.map(a => [a.id, a]))
-    const extraIds = Object.keys(latest).filter(id => !known[id])
-    if (extraIds.length) {
-      const { data: extra } = await supabase.from('assignments').select('id, title, due_date').in('id', extraIds)
-      for (const a of extra || []) known[a.id] = a
-    }
-
-    const nowMs = Date.now()
-    const hasGrade = (sub) => sub && sub.grade !== null && sub.grade !== undefined && !Number.isNaN(Number(sub.grade))
-
-    const homework = assignments.map(a => {
-      const sub = latest[a.id]
-      const dueMs = a.due_date ? new Date(a.due_date).getTime() : null
-      let status = 'Not submitted'
-      if (hasGrade(sub)) status = 'Graded'
-      else if (sub) status = titleCase(sub.status) || 'Submitted'
-      else if (dueMs && dueMs < nowMs) status = 'Overdue'
-      return {
-        id: a.id,
-        title: a.title,
-        description: a.description || '',
-        dueDate: a.due_date,
-        status,
-        grade: hasGrade(sub) ? Number(sub.grade) : null,
-        feedback: sub?.feedback || null,
-      }
-    })
-
-    const graded = Object.values(latest)
-      .filter(hasGrade)
-      .map(sub => ({
-        assignmentId: sub.assignment_id,
-        title: known[sub.assignment_id]?.title || 'Assignment',
-        grade: Number(sub.grade),
-        feedback: sub.feedback || null,
-        date: sub.submitted_at,
-      }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-
-    const average = graded.length
-      ? Math.round((graded.reduce((t, g) => t + g.grade, 0) / graded.length) * 10) / 10
-      : null
-
-    const subjects = Array.isArray(student?.subjects) ? student.subjects : []
-    res.json({
-      profile: { name: user.name, grade: student?.grade ?? null, subjects, classId: student?.class_id ?? null, letter: cls?.name ?? null },
-      org: orgRes.data || null,
-      isVerified: !!user.is_verified,
-      classInfo,
-      homework,
-      graded,
-      average,
-      events: eventsRes.data || [],
-      needsSetup: !student?.grade || subjects.length === 0 || !student?.class_id,
-    })
+    res.json(await buildStudentOverview(ctx.user, ctx.student))
   } catch (err) {
     console.error('Student overview error:', err)
     res.status(500).json({ error: 'Could not load your dashboard. Please try again.' })
@@ -1109,6 +1113,447 @@ app.post('/api/ai-tutor', verifyToken, aiLimiter, async (req, res) => {
     console.error('Gemini error:', err)
     if (!res.headersSent) res.status(500).json({ error: 'The AI tutor is unavailable right now. Please try again.' })
     else res.end()
+  }
+})
+
+// ---------- Parent–child links (Phase 11) ----------
+// A parent asks to be linked to a student. Either the student or an admin can accept or reject;
+// whoever decides first settles it. parents.child_ids (student USER ids) is the single source of
+// truth for what a parent may see, and every parent route checks it.
+const parentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+const linkRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many link requests. Please try again later.' },
+})
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v)
+
+async function loadUserWithRole(authUser, role) {
+  const { data: user } = await supabase
+    .from('users').select('id, name, role, org_id, is_verified').eq('id', authUser.id).maybeSingle()
+  if (!user || user.role !== role) return null
+  return user
+}
+
+async function getLinkedChildIds(parentId) {
+  const { data } = await supabase.from('parents').select('child_ids').eq('user_id', parentId).maybeSingle()
+  return Array.isArray(data?.child_ids) ? data.child_ids : []
+}
+
+async function addChildLink(parentId, studentId) {
+  const { data: row, error } = await supabase.from('parents').select('id, child_ids').eq('user_id', parentId).maybeSingle()
+  if (error) throw error
+  if (!row) {
+    const { error: insErr } = await supabase.from('parents').insert({ user_id: parentId, child_ids: [studentId] })
+    if (insErr) throw insErr
+    return
+  }
+  const ids = Array.isArray(row.child_ids) ? row.child_ids : []
+  if (ids.includes(studentId)) return
+  const { error: upErr } = await supabase.from('parents').update({ child_ids: [...ids, studentId] }).eq('id', row.id)
+  if (upErr) throw upErr
+}
+
+async function removeChildLink(parentId, studentId) {
+  const { data: row, error } = await supabase.from('parents').select('id, child_ids').eq('user_id', parentId).maybeSingle()
+  if (error) throw error
+  if (!row) return
+  const ids = Array.isArray(row.child_ids) ? row.child_ids : []
+  if (!ids.includes(studentId)) return
+  const { error: upErr } = await supabase.from('parents').update({ child_ids: ids.filter(id => id !== studentId) }).eq('id', row.id)
+  if (upErr) throw upErr
+}
+
+// Notifications are a nice-to-have; a failure here never breaks the request
+async function notifyUser(userId, content, type = 'info') {
+  const { error } = await supabase.from('notifications').insert({ user_id: userId, type, content })
+  if (error) console.error('Notification insert failed:', error.message)
+}
+
+// { userId: { id, name, email } }
+async function usersById(ids) {
+  const unique = [...new Set(ids.filter(Boolean))]
+  if (!unique.length) return {}
+  const { data } = await supabase.from('users').select('id, name, email').in('id', unique)
+  return Object.fromEntries((data || []).map(u => [u.id, u]))
+}
+
+// { studentUserId: { grade, classLabel } }
+async function studentBasics(userIds) {
+  const unique = [...new Set(userIds.filter(Boolean))]
+  if (!unique.length) return {}
+  const { data: rows } = await supabase.from('students').select('user_id, grade, class_id').in('user_id', unique)
+  const classIds = [...new Set((rows || []).map(r => r.class_id).filter(Boolean))]
+  const classes = {}
+  if (classIds.length) {
+    const { data } = await supabase.from('classes').select('id, name, grade').in('id', classIds)
+    for (const c of data || []) classes[c.id] = classLabel(c)
+  }
+  return Object.fromEntries((rows || []).map(r => [r.user_id, { grade: r.grade ?? null, classLabel: classes[r.class_id] || null }]))
+}
+
+const displayName = (u) => (u && (u.name || u.email)) || 'Unknown'
+
+// Accept or reject a pending request. The conditional update means the first decision wins,
+// even if the student and an admin click at the same moment.
+async function decideLinkRequest(requestId, action, actor, { onlyStudentId } = {}) {
+  const { data: row } = await supabase.from('parent_child_requests').select('*').eq('id', requestId).maybeSingle()
+  if (!row || (onlyStudentId && row.student_id !== onlyStudentId)) return { code: 404, error: 'Request not found.' }
+  if (row.status !== 'pending') return { code: 409, error: 'This request has already been dealt with.' }
+
+  const status = action === 'accept' ? 'accepted' : 'rejected'
+  const { data: claimed, error } = await supabase.from('parent_child_requests')
+    .update({ status, decided_by: actor.id, decided_by_role: actor.role, decided_at: new Date().toISOString() })
+    .eq('id', requestId).eq('status', 'pending').select('id')
+  if (error) throw error
+  if (!claimed || !claimed.length) return { code: 409, error: 'This request has already been dealt with.' }
+
+  if (status === 'accepted') {
+    try {
+      await addChildLink(row.parent_id, row.student_id)
+    } catch (err) {
+      // Put the request back so it can be tried again
+      await supabase.from('parent_child_requests')
+        .update({ status: 'pending', decided_by: null, decided_by_role: null, decided_at: null }).eq('id', requestId)
+      throw err
+    }
+  }
+
+  const people = await usersById([row.student_id])
+  const childName = displayName(people[row.student_id])
+  await notifyUser(
+    row.parent_id,
+    status === 'accepted'
+      ? `Your request to link ${childName} was accepted. You can now see their progress.`
+      : `Your request to link ${childName} was declined.`,
+    status === 'accepted' ? 'success' : 'warning'
+  )
+  return { ok: true, status }
+}
+
+// Ends an accepted link. Access is revoked first; the request row is kept as a record.
+async function removeLink(row, actor) {
+  await removeChildLink(row.parent_id, row.student_id)
+  const { error } = await supabase.from('parent_child_requests')
+    .update({ status: 'removed', decided_by: actor.id, decided_by_role: actor.role, decided_at: new Date().toISOString() })
+    .eq('id', row.id)
+  if (error) throw error
+}
+
+const cleanAction = (v) => (v === 'accept' || v === 'reject' ? v : null)
+
+// ----- Parent -----
+
+// Linked children + requests that are still pending or were declined
+app.get('/api/parent/children', verifyToken, parentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'parent')
+    if (!user) return res.status(403).json({ error: 'Parents only' })
+
+    const childIds = await getLinkedChildIds(user.id)
+    const { data: reqs } = await supabase.from('parent_child_requests')
+      .select('id, student_id, status, created_at, decided_at')
+      .eq('parent_id', user.id).in('status', ['pending', 'rejected'])
+      .order('created_at', { ascending: false })
+
+    const allIds = [...childIds, ...(reqs || []).map(r => r.student_id)]
+    const [people, basics] = await Promise.all([usersById(allIds), studentBasics(allIds)])
+
+    const children = childIds.filter(id => people[id]).map(id => ({
+      id,
+      name: displayName(people[id]),
+      grade: basics[id]?.grade ?? null,
+      className: basics[id]?.classLabel ?? null,
+    })).sort((a, b) => a.name.localeCompare(b.name))
+
+    const requests = (reqs || []).filter(r => people[r.student_id]).map(r => ({
+      id: r.id,
+      studentId: r.student_id,
+      studentName: displayName(people[r.student_id]),
+      grade: basics[r.student_id]?.grade ?? null,
+      status: r.status,
+      createdAt: r.created_at,
+      decidedAt: r.decided_at,
+    }))
+
+    res.json({ children, requests, isVerified: !!user.is_verified })
+  } catch (err) {
+    console.error('Parent children error:', err)
+    res.status(500).json({ error: 'Could not load your children. Please try again.' })
+  }
+})
+
+// Find students at the parent's own school by name. Only name and grade are returned.
+app.get('/api/parent/students/search', verifyToken, parentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'parent')
+    if (!user) return res.status(403).json({ error: 'Parents only' })
+    if (!requireVerified(user, res)) return
+    if (!user.org_id) return res.status(400).json({ error: 'Your account is not linked to a school yet.' })
+
+    const q = String(req.query.q || '').trim().slice(0, 60)
+    if (q.length < 2) return res.json({ students: [] })
+    const escaped = q.replace(/[\\%_]/g, (m) => `\\${m}`)
+
+    const { data: found, error } = await supabase.from('users')
+      .select('id, name').eq('org_id', user.org_id).eq('role', 'student')
+      .ilike('name', `%${escaped}%`).order('name').limit(10)
+    if (error) throw error
+
+    const ids = (found || []).map(u => u.id)
+    const [basics, childIds, reqRes] = await Promise.all([
+      studentBasics(ids),
+      getLinkedChildIds(user.id),
+      ids.length
+        ? supabase.from('parent_child_requests').select('student_id, status').eq('parent_id', user.id).in('student_id', ids)
+        : Promise.resolve({ data: [] }),
+    ])
+    const reqStatus = Object.fromEntries((reqRes.data || []).map(r => [r.student_id, r.status]))
+
+    res.json({
+      students: (found || []).map(u => ({
+        id: u.id,
+        name: u.name,
+        grade: basics[u.id]?.grade ?? null,
+        status: childIds.includes(u.id) ? 'linked'
+          : (reqStatus[u.id] === 'pending' || reqStatus[u.id] === 'rejected') ? reqStatus[u.id] : null,
+      })),
+    })
+  } catch (err) {
+    console.error('Parent search error:', err)
+    res.status(500).json({ error: 'Search failed. Please try again.' })
+  }
+})
+
+// Ask to be linked to a student
+app.post('/api/parent/link-requests', verifyToken, parentLimiter, linkRequestLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'parent')
+    if (!user) return res.status(403).json({ error: 'Parents only' })
+    if (!requireVerified(user, res)) return
+
+    const studentId = req.body?.studentId
+    if (!isUuid(studentId)) return res.status(400).json({ error: 'Please choose a student.' })
+
+    const { data: student } = await supabase.from('users')
+      .select('id, name, role, org_id').eq('id', studentId).maybeSingle()
+    if (!student || student.role !== 'student' || !user.org_id || student.org_id !== user.org_id) {
+      return res.status(404).json({ error: 'We could not find that student at your school.' })
+    }
+
+    const { data: existing } = await supabase.from('parent_child_requests')
+      .select('id, status').eq('parent_id', user.id).eq('student_id', studentId).maybeSingle()
+
+    if (existing) {
+      if (existing.status === 'pending') return res.status(409).json({ error: 'You already have a request waiting for this student.' })
+      if (existing.status === 'accepted') return res.status(409).json({ error: 'You are already linked to this student.' })
+      if (existing.status === 'rejected') {
+        return res.status(403).json({ error: 'This request was declined. Please contact your school admin if you think this is a mistake.' })
+      }
+      // 'removed' → reopen the same row
+      const { error } = await supabase.from('parent_child_requests')
+        .update({ status: 'pending', org_id: user.org_id, decided_by: null, decided_by_role: null, decided_at: null, created_at: new Date().toISOString() })
+        .eq('id', existing.id)
+      if (error) throw error
+    } else {
+      const { error } = await supabase.from('parent_child_requests')
+        .insert({ parent_id: user.id, student_id: studentId, org_id: user.org_id })
+      if (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'You already have a request for this student.' })
+        throw error
+      }
+    }
+
+    await notifyUser(studentId, `${user.name || 'A parent'} asked to be linked to your account as your parent. Open your dashboard to accept or decline.`)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Link request error:', err)
+    res.status(500).json({ error: 'Could not send the request. Please try again.' })
+  }
+})
+
+// Cancel one of my own requests that is still waiting
+app.delete('/api/parent/link-requests/:id', verifyToken, parentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'parent')
+    if (!user) return res.status(403).json({ error: 'Parents only' })
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Request not found.' })
+
+    const { data, error } = await supabase.from('parent_child_requests')
+      .delete().eq('id', req.params.id).eq('parent_id', user.id).eq('status', 'pending').select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'That request is no longer waiting.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Cancel link request error:', err)
+    res.status(500).json({ error: 'Could not cancel the request. Please try again.' })
+  }
+})
+
+// Read-only view of one linked child. The child must be in this parent's child_ids.
+app.get('/api/parent/children/:childId/overview', verifyToken, parentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'parent')
+    if (!user) return res.status(403).json({ error: 'Parents only' })
+
+    const childId = req.params.childId
+    const childIds = await getLinkedChildIds(user.id)
+    if (!isUuid(childId) || !childIds.includes(childId)) {
+      return res.status(403).json({ error: 'That child is not linked to your account.' })
+    }
+
+    const { data: childUser } = await supabase.from('users')
+      .select('id, name, role, org_id, is_verified').eq('id', childId).maybeSingle()
+    if (!childUser || childUser.role !== 'student') return res.status(404).json({ error: 'Child not found.' })
+    const { data: studentRow } = await supabase.from('students').select('*').eq('user_id', childId).maybeSingle()
+
+    const overview = await buildStudentOverview(childUser, studentRow)
+    res.json({ child: { id: childUser.id, name: childUser.name }, ...overview })
+  } catch (err) {
+    console.error('Parent child overview error:', err)
+    res.status(500).json({ error: 'Could not load your child\'s progress. Please try again.' })
+  }
+})
+
+// ----- Student -----
+
+app.get('/api/student/link-requests', verifyToken, studentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'student')
+    if (!user) return res.status(403).json({ error: 'Students only' })
+
+    const { data: rows } = await supabase.from('parent_child_requests')
+      .select('id, parent_id, status, created_at')
+      .eq('student_id', user.id).in('status', ['pending', 'accepted'])
+      .order('created_at', { ascending: false })
+    const people = await usersById((rows || []).map(r => r.parent_id))
+
+    res.json({
+      pending: (rows || []).filter(r => r.status === 'pending' && people[r.parent_id])
+        .map(r => ({ id: r.id, parentName: displayName(people[r.parent_id]), createdAt: r.created_at })),
+      parents: (rows || []).filter(r => r.status === 'accepted' && people[r.parent_id])
+        .map(r => ({ requestId: r.id, parentId: r.parent_id, parentName: displayName(people[r.parent_id]) })),
+    })
+  } catch (err) {
+    console.error('Student link requests error:', err)
+    res.status(500).json({ error: 'Could not load link requests.' })
+  }
+})
+
+app.post('/api/student/link-requests/:id/decision', verifyToken, studentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'student')
+    if (!user) return res.status(403).json({ error: 'Students only' })
+    if (!requireVerified(user, res)) return
+    const action = cleanAction(req.body?.action)
+    if (!action) return res.status(400).json({ error: 'Choose accept or reject.' })
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Request not found.' })
+
+    const result = await decideLinkRequest(req.params.id, action, { id: user.id, role: 'student' }, { onlyStudentId: user.id })
+    if (result.error) return res.status(result.code).json({ error: result.error })
+    res.json({ success: true, status: result.status })
+  } catch (err) {
+    console.error('Student decision error:', err)
+    res.status(500).json({ error: 'Could not save your answer. Please try again.' })
+  }
+})
+
+// Student removes a linked parent
+app.delete('/api/student/parents/:parentId', verifyToken, studentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'student')
+    if (!user) return res.status(403).json({ error: 'Students only' })
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.parentId)) return res.status(404).json({ error: 'Link not found.' })
+
+    const { data: row } = await supabase.from('parent_child_requests').select('*')
+      .eq('parent_id', req.params.parentId).eq('student_id', user.id).eq('status', 'accepted').maybeSingle()
+    if (!row) return res.status(404).json({ error: 'That link no longer exists.' })
+
+    await removeLink(row, { id: user.id, role: 'student' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Student unlink error:', err)
+    res.status(500).json({ error: 'Could not remove the link. Please try again.' })
+  }
+})
+
+// ----- Admin -----
+
+app.get('/api/admin/link-requests', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const allowed = ['pending', 'accepted', 'rejected', 'removed']
+    const status = allowed.includes(req.query.status) ? req.query.status : 'pending'
+
+    const { data: rows, error } = await supabase.from('parent_child_requests')
+      .select('id, parent_id, student_id, org_id, status, created_at, decided_at, decided_by_role')
+      .eq('status', status).order('created_at', { ascending: false }).limit(200)
+    if (error) throw error
+
+    const people = await usersById((rows || []).flatMap(r => [r.parent_id, r.student_id]))
+    const orgIds = [...new Set((rows || []).map(r => r.org_id).filter(Boolean))]
+    const orgs = {}
+    if (orgIds.length) {
+      const { data } = await supabase.from('organizations').select('id, name').in('id', orgIds)
+      for (const o of data || []) orgs[o.id] = o.name
+    }
+
+    res.json({
+      requests: (rows || []).map(r => ({
+        id: r.id,
+        status: r.status,
+        parentName: displayName(people[r.parent_id]),
+        parentEmail: people[r.parent_id]?.email || '',
+        studentName: displayName(people[r.student_id]),
+        studentEmail: people[r.student_id]?.email || '',
+        orgName: orgs[r.org_id] || null,
+        createdAt: r.created_at,
+        decidedAt: r.decided_at,
+        decidedByRole: r.decided_by_role,
+      })),
+    })
+  } catch (err) {
+    console.error('Admin link requests error:', err)
+    res.status(500).json({ error: 'Could not load link requests.' })
+  }
+})
+
+app.post('/api/admin/link-requests/:id/decision', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const action = cleanAction(req.body?.action)
+    if (!action) return res.status(400).json({ error: 'Choose accept or reject.' })
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Request not found.' })
+
+    const result = await decideLinkRequest(req.params.id, action, { id: req.user.id, role: 'admin' })
+    if (result.error) return res.status(result.code).json({ error: result.error })
+    res.json({ success: true, status: result.status })
+  } catch (err) {
+    console.error('Admin decision error:', err)
+    res.status(500).json({ error: 'Could not save the decision. Please try again.' })
+  }
+})
+
+app.post('/api/admin/link-requests/:id/remove', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Request not found.' })
+    const { data: row } = await supabase.from('parent_child_requests').select('*')
+      .eq('id', req.params.id).eq('status', 'accepted').maybeSingle()
+    if (!row) return res.status(404).json({ error: 'That link no longer exists.' })
+
+    await removeLink(row, { id: req.user.id, role: 'admin' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Admin unlink error:', err)
+    res.status(500).json({ error: 'Could not remove the link. Please try again.' })
   }
 })
 
