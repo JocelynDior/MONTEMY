@@ -37,7 +37,7 @@ import SchoolMemberDashboard from './pages/schoolmember/SchoolMemberDashboard'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminClasses from './pages/admin/AdminClasses'
-import AdminChat from './pages/admin/AdminChat'
+import Messages from './pages/shared/Messages'
 import AdminOrgs from './pages/admin/AdminOrgs'
 
 // Signed in AND the right role
@@ -62,6 +62,9 @@ export default function App() {
           <Route path="/create-account" element={<AccountTypeSelect />} />
           <Route path="/register/:type" element={<Register />} />
           <Route path="/signup" element={<AccountTypeSelect />} />
+
+          {/* Messaging: one shared page for every role */}
+          <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
 
           {/* Any signed-in user */}
           <Route path="/pending-verification" element={<ProtectedRoute><PendingVerification /></ProtectedRoute>} />
@@ -100,7 +103,7 @@ export default function App() {
           <Route path="/admin/dashboard" element={guard('admin', <AdminDashboard />)} />
           <Route path="/admin/users" element={guard('admin', <AdminUsers />)} />
           <Route path="/admin/classes" element={guard('admin', <AdminClasses />)} />
-          <Route path="/admin/chat" element={guard('admin', <AdminChat />)} />
+          <Route path="/admin/chat" element={<Navigate to="/messages" replace />} />
           <Route path="/admin/organisations" element={guard('admin', <AdminOrgs />)} />
 
           {/* Anything else */}
