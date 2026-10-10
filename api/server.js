@@ -1913,6 +1913,388 @@ app.delete('/api/principal/events/:id', verifyToken, principalLimiter, async (re
   }
 })
 
+// ---------- Tutor routes (Phase 13) ----------
+// A tutor works with students from their own organisation. Students are added to the tutor
+// (tutor_students) and sessions can only be booked for students on that list. Parents only ever
+// see sessions of children in their own child_ids, and only notes the tutor chose to share.
+const tutorLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+const SESSION_STATUSES = ['scheduled', 'completed', 'cancelled']
+
+async function tutorOrFail(req, res) {
+  const user = await loadUserWithRole(req.user, 'tutor')
+  if (!user) { res.status(403).json({ error: 'Tutors only' }); return null }
+  if (!user.org_id) { res.status(400).json({ error: 'Your account is not linked to an organisation yet.' }); return null }
+  return user
+}
+
+const SESSION_COLUMNS = 'id, tutor_id, student_id, starts_at, duration_minutes, subject, notes, share_notes_with_parents, status'
+
+function shapeSession(r, people) {
+  return {
+    id: r.id,
+    studentId: r.student_id,
+    studentName: displayName(people[r.student_id]),
+    startsAt: r.starts_at,
+    durationMinutes: r.duration_minutes,
+    subject: r.subject || null,
+    notes: r.notes || null,
+    shareNotesWithParents: !!r.share_notes_with_parents,
+    status: r.status,
+  }
+}
+
+// Validates the fields a tutor can set on a session. With partial=true only provided fields are checked.
+function cleanSessionInput(body, { partial = false } = {}) {
+  const out = {}
+  if (!partial || body.startsAt !== undefined) {
+    const d = new Date(body.startsAt)
+    if (!body.startsAt || Number.isNaN(d.getTime())) return { error: 'Please choose a valid date and time.' }
+    out.starts_at = d.toISOString()
+  }
+  if (!partial || body.durationMinutes !== undefined) {
+    const n = body.durationMinutes === undefined ? 60 : Math.round(Number(body.durationMinutes))
+    if (!Number.isFinite(n) || n < 5 || n > 480) return { error: 'Duration must be between 5 and 480 minutes.' }
+    out.duration_minutes = n
+  }
+  if (body.subject !== undefined) {
+    const s = typeof body.subject === 'string' ? body.subject.trim() : ''
+    if (s.length > 100) return { error: 'The subject is too long (max 100 characters).' }
+    out.subject = s || null
+  }
+  if (body.notes !== undefined) {
+    const n = typeof body.notes === 'string' ? body.notes.trim() : ''
+    if (n.length > 2000) return { error: 'The notes are too long (max 2000 characters).' }
+    out.notes = n || null
+  }
+  if (body.shareNotesWithParents !== undefined) out.share_notes_with_parents = body.shareNotesWithParents === true
+  if (body.status !== undefined) {
+    if (!SESSION_STATUSES.includes(body.status)) return { error: 'That status is not valid.' }
+    out.status = body.status
+  }
+  return { value: out }
+}
+
+app.get('/api/tutor/overview', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+    const nowIso = new Date().toISOString()
+
+    const [orgRes, studentsRes, upcomingRes, upcomingCountRes, completedRes] = await Promise.all([
+      supabase.from('organizations').select('id, name').eq('id', user.org_id).maybeSingle(),
+      supabase.from('tutor_students').select('id', { count: 'exact', head: true }).eq('tutor_id', user.id),
+      supabase.from('tutor_sessions').select(SESSION_COLUMNS).eq('tutor_id', user.id)
+        .eq('status', 'scheduled').gte('starts_at', nowIso).order('starts_at', { ascending: true }).limit(5),
+      supabase.from('tutor_sessions').select('id', { count: 'exact', head: true }).eq('tutor_id', user.id)
+        .eq('status', 'scheduled').gte('starts_at', nowIso),
+      supabase.from('tutor_sessions').select('id', { count: 'exact', head: true }).eq('tutor_id', user.id).eq('status', 'completed'),
+    ])
+    for (const r of [studentsRes, upcomingRes, upcomingCountRes, completedRes]) if (r.error) throw r.error
+
+    const rows = upcomingRes.data || []
+    const people = await usersById(rows.map(r => r.student_id))
+
+    res.json({
+      org: orgRes.data || null,
+      isVerified: !!user.is_verified,
+      studentCount: studentsRes.count || 0,
+      upcomingCount: upcomingCountRes.count || 0,
+      completedCount: completedRes.count || 0,
+      upcoming: rows.map(r => shapeSession(r, people)),
+    })
+  } catch (err) {
+    console.error('Tutor overview error:', err)
+    res.status(500).json({ error: 'Could not load your overview. Please try again.' })
+  }
+})
+
+app.get('/api/tutor/students', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+
+    const links = await fetchAllRows(() =>
+      supabase.from('tutor_students').select('student_id, created_at').eq('tutor_id', user.id).order('id'))
+    const ids = links.map(l => l.student_id)
+    const [people, basics, sessions] = await Promise.all([
+      usersById(ids),
+      studentBasics(ids),
+      fetchAllRows(() => supabase.from('tutor_sessions').select('student_id, starts_at, status').eq('tutor_id', user.id).order('id')),
+    ])
+
+    const now = Date.now()
+    const stats = {}
+    for (const s of sessions) {
+      const st = (stats[s.student_id] ||= { total: 0, completed: 0, next: null, last: null })
+      st.total += 1
+      const t = new Date(s.starts_at).getTime()
+      if (s.status === 'completed') {
+        st.completed += 1
+        if (!st.last || t > new Date(st.last).getTime()) st.last = s.starts_at
+      }
+      if (s.status === 'scheduled' && t >= now && (!st.next || t < new Date(st.next).getTime())) st.next = s.starts_at
+    }
+
+    const students = links.filter(l => people[l.student_id]).map(l => ({
+      id: l.student_id,
+      name: displayName(people[l.student_id]),
+      grade: basics[l.student_id]?.grade ?? null,
+      sessionCount: stats[l.student_id]?.total || 0,
+      completedCount: stats[l.student_id]?.completed || 0,
+      nextSession: stats[l.student_id]?.next || null,
+      lastSession: stats[l.student_id]?.last || null,
+    })).sort((a, b) => a.name.localeCompare(b.name))
+
+    res.json({ students })
+  } catch (err) {
+    console.error('Tutor students error:', err)
+    res.status(500).json({ error: 'Could not load your students. Please try again.' })
+  }
+})
+
+// Find students in the tutor's own organisation by name. Only name and grade are returned.
+app.get('/api/tutor/students/search', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+
+    const q = String(req.query.q || '').trim().slice(0, 60)
+    if (q.length < 2) return res.json({ students: [] })
+    const escaped = q.replace(/[\\%_]/g, (m) => `\\${m}`)
+
+    const { data: found, error } = await supabase.from('users')
+      .select('id, name').eq('org_id', user.org_id).eq('role', 'student')
+      .ilike('name', `%${escaped}%`).order('name').limit(10)
+    if (error) throw error
+
+    const ids = (found || []).map(u => u.id)
+    const [basics, linkRes] = await Promise.all([
+      studentBasics(ids),
+      ids.length
+        ? supabase.from('tutor_students').select('student_id').eq('tutor_id', user.id).in('student_id', ids)
+        : Promise.resolve({ data: [] }),
+    ])
+    const added = new Set((linkRes.data || []).map(r => r.student_id))
+
+    res.json({
+      students: (found || []).map(u => ({ id: u.id, name: u.name, grade: basics[u.id]?.grade ?? null, added: added.has(u.id) })),
+    })
+  } catch (err) {
+    console.error('Tutor search error:', err)
+    res.status(500).json({ error: 'Search failed. Please try again.' })
+  }
+})
+
+app.post('/api/tutor/students', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+
+    const studentId = req.body?.studentId
+    if (!isUuid(studentId)) return res.status(400).json({ error: 'Please choose a student.' })
+
+    const { data: student } = await supabase.from('users')
+      .select('id, role, org_id').eq('id', studentId).maybeSingle()
+    if (!student || student.role !== 'student' || student.org_id !== user.org_id) {
+      return res.status(404).json({ error: 'We could not find that student in your organisation.' })
+    }
+
+    const { error } = await supabase.from('tutor_students')
+      .insert({ tutor_id: user.id, student_id: studentId, org_id: user.org_id })
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'This student is already on your list.' })
+      throw error
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Add tutor student error:', err)
+    res.status(500).json({ error: 'Could not add the student. Please try again.' })
+  }
+})
+
+// Removing a student keeps the session history; it only stops new sessions being booked
+app.delete('/api/tutor/students/:studentId', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+    if (!isUuid(req.params.studentId)) return res.status(404).json({ error: 'Student not found.' })
+
+    const { data, error } = await supabase.from('tutor_students')
+      .delete().eq('tutor_id', user.id).eq('student_id', req.params.studentId).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'That student is not on your list.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Remove tutor student error:', err)
+    res.status(500).json({ error: 'Could not remove the student. Please try again.' })
+  }
+})
+
+app.get('/api/tutor/sessions', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+
+    let q = supabase.from('tutor_sessions').select(SESSION_COLUMNS).eq('tutor_id', user.id)
+    if (req.query.studentId !== undefined) {
+      if (!isUuid(req.query.studentId)) return res.status(400).json({ error: 'That student is not valid.' })
+      q = q.eq('student_id', req.query.studentId)
+    }
+    const { data, error } = await q.order('starts_at', { ascending: false }).limit(500)
+    if (error) throw error
+
+    const people = await usersById((data || []).map(r => r.student_id))
+    res.json({ sessions: (data || []).map(r => shapeSession(r, people)) })
+  } catch (err) {
+    console.error('Tutor sessions error:', err)
+    res.status(500).json({ error: 'Could not load sessions. Please try again.' })
+  }
+})
+
+app.post('/api/tutor/sessions', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    const body = req.body || {}
+
+    if (!isUuid(body.studentId)) return res.status(400).json({ error: 'Please choose a student.' })
+    const { data: link } = await supabase.from('tutor_students').select('id')
+      .eq('tutor_id', user.id).eq('student_id', body.studentId).maybeSingle()
+    if (!link) return res.status(403).json({ error: 'Add this student to your list before booking a session.' })
+
+    const input = cleanSessionInput(body)
+    if (input.error) return res.status(400).json({ error: input.error })
+    if (input.value.status === 'completed') input.value.status = 'scheduled'
+
+    const { data, error } = await supabase.from('tutor_sessions')
+      .insert({ ...input.value, tutor_id: user.id, student_id: body.studentId, org_id: user.org_id }).select('id').single()
+    if (error) throw error
+
+    await notifyUser(body.studentId, `${user.name || 'Your tutor'} scheduled a tutoring session with you. Check your dashboard for the time.`)
+    res.json({ success: true, id: data.id })
+  } catch (err) {
+    console.error('Create session error:', err)
+    res.status(500).json({ error: 'Could not save the session. Please try again.' })
+  }
+})
+
+app.put('/api/tutor/sessions/:id', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Session not found.' })
+
+    const input = cleanSessionInput(req.body || {}, { partial: true })
+    if (input.error) return res.status(400).json({ error: input.error })
+    if (!Object.keys(input.value).length) return res.status(400).json({ error: 'Nothing to change.' })
+
+    // tutor_id in the filter means a tutor can only change their own sessions
+    const { data, error } = await supabase.from('tutor_sessions')
+      .update({ ...input.value, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).eq('tutor_id', user.id).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'Session not found.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Update session error:', err)
+    res.status(500).json({ error: 'Could not save your changes. Please try again.' })
+  }
+})
+
+app.delete('/api/tutor/sessions/:id', verifyToken, tutorLimiter, async (req, res) => {
+  try {
+    const user = await tutorOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Session not found.' })
+
+    const { data, error } = await supabase.from('tutor_sessions')
+      .delete().eq('id', req.params.id).eq('tutor_id', user.id).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'Session not found.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Delete session error:', err)
+    res.status(500).json({ error: 'Could not delete the session. Please try again.' })
+  }
+})
+
+// ----- Student: next tutoring sessions (no notes) -----
+
+app.get('/api/student/tutor-sessions', verifyToken, studentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'student')
+    if (!user) return res.status(403).json({ error: 'Students only' })
+
+    const { data, error } = await supabase.from('tutor_sessions')
+      .select('id, tutor_id, starts_at, duration_minutes, subject')
+      .eq('student_id', user.id).eq('status', 'scheduled').gte('starts_at', new Date().toISOString())
+      .order('starts_at', { ascending: true }).limit(3)
+    if (error) throw error
+
+    const tutors = await usersById((data || []).map(r => r.tutor_id))
+    res.json({
+      sessions: (data || []).map(r => ({
+        id: r.id,
+        tutorName: displayName(tutors[r.tutor_id]),
+        startsAt: r.starts_at,
+        durationMinutes: r.duration_minutes,
+        subject: r.subject || null,
+      })),
+    })
+  } catch (err) {
+    console.error('Student tutor sessions error:', err)
+    res.status(500).json({ error: 'Could not load tutoring sessions.' })
+  }
+})
+
+// ----- Parent: a linked child's tutoring sessions (notes only when the tutor shared them) -----
+
+app.get('/api/parent/children/:childId/tutor-sessions', verifyToken, parentLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'parent')
+    if (!user) return res.status(403).json({ error: 'Parents only' })
+
+    const childId = req.params.childId
+    const childIds = await getLinkedChildIds(user.id)
+    if (!isUuid(childId) || !childIds.includes(childId)) {
+      return res.status(403).json({ error: 'That child is not linked to your account.' })
+    }
+
+    const { data, error } = await supabase.from('tutor_sessions')
+      .select('id, tutor_id, starts_at, duration_minutes, subject, notes, share_notes_with_parents, status')
+      .eq('student_id', childId).neq('status', 'cancelled')
+      .order('starts_at', { ascending: false }).limit(100)
+    if (error) throw error
+
+    const tutors = await usersById((data || []).map(r => r.tutor_id))
+    res.json({
+      sessions: (data || []).map(r => ({
+        id: r.id,
+        tutorName: displayName(tutors[r.tutor_id]),
+        startsAt: r.starts_at,
+        durationMinutes: r.duration_minutes,
+        subject: r.subject || null,
+        status: r.status,
+        notes: r.share_notes_with_parents ? (r.notes || null) : null,
+      })),
+    })
+  } catch (err) {
+    console.error('Parent tutor sessions error:', err)
+    res.status(500).json({ error: 'Could not load tutoring sessions. Please try again.' })
+  }
+})
+
 app.listen(PORT, () => {
   console.log(`Montemy API running on port ${PORT}`)
 })
