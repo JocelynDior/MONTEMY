@@ -1,117 +1,173 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../supabase/client'
+import React, { useState } from 'react'
+import StudentPage from '../../components/student/StudentPage'
+import AddChildPanel from '../../components/parent/AddChildPanel'
+import ChildSwitcher from '../../components/parent/ChildSwitcher'
+import { Chip, ErrorBox, muted, panel, panelTitle } from '../../components/parent/parentUi'
+import { useParentChildren } from '../../hooks/useParentChildren'
+import { useApiData } from '../../hooks/useApiData'
+import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
 
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)', lightNavy: 'var(--color-bg-light)' }
+const TABS = ['Overview', 'Homework', 'Grades']
 
-export default function ParentMyChild() {
-  const navigate = useNavigate()
-  const [children, setChildren] = useState([])
-  const [selectedChild, setSelectedChild] = useState(null)
-  const [childProgress, setChildProgress] = useState([])
-  const [childAssignments, setChildAssignments] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [menuOpen, setMenuOpen] = useState(false)
+function Empty({ children }) {
+  return <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>{children}</div>
+}
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async user => {
-      if (!user) return navigate('/')
-      try {
-        const snap = await getDoc(doc(db, 'parents', user.uid))
-        if (snap.exists()) {
-          const d = snap.data()
-          const linkedChildren = d.children || []
-          if (linkedChildren.length > 0) {
-            const childDocs = await Promise.all(linkedChildren.map(c => getDoc(doc(db, 'students', c.id))))
-            const childData = childDocs.filter(d => d.exists()).map(d => ({ id: d.id, ...d.data() }))
-            setChildren(childData)
-            if (childData.length > 0) selectChild(childData[0])
-          }
-        }
-      } catch (err) { console.error(err) }
-      setLoading(false)
-    })
-    return () => unsub()
-  }, [])
-
-  const selectChild = async (child) => {
-    setSelectedChild(child)
-    try {
-      const [progressSnap, assignSnap] = await Promise.all([
-        getDocs(query(collection(db, 'progress'), where('studentId', '==', child.id))),
-        getDocs(query(collection(db, 'assignments'), where('className', 'in', child.subjects?.length > 0 ? child.subjects : ['__none__'])))
-      ])
-      setChildProgress(progressSnap.docs.map(d => ({ id: d.id, ...d.data() })))
-      setChildAssignments(assignSnap.docs.map(d => ({ id: d.id, ...d.data() })))
-    } catch (err) { console.error(err) }
-  }
-
+function OverviewTab({ data }) {
+  const { profile, org, classInfo, average, graded, events } = data
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }}>
-      <nav style={{ background: s.turquoise, padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ color: s.navy, fontSize: '1.5rem', fontWeight: 'bold' }}>MONTEMY</div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => navigate('/parent/dashboard')} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Dashboard</button>
-          <button onClick={async () => { await signOut(auth); navigate('/') }} style={{ background: s.navy, color: s.turquoise, padding: '0.5rem 1rem', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Logout</button>
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <div style={panel}>
+        <h3 style={panelTitle}>{data.child.name}</h3>
+        <div style={muted}>
+          {org?.name || 'No school linked'}
+          {profile.grade ? ` · Grade ${profile.grade}` : ''}
+          {classInfo ? ` · ${classInfo.name}` : ''}
         </div>
-      </nav>
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-        <h2 style={{ color: s.turquoise, fontSize: '1.8rem', marginBottom: '1.5rem' }}>My Child</h2>
-        {loading ? <div style={{ textAlign: 'center', color: s.turquoise, padding: '3rem' }}>Loading...</div>
-          : children.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: '#ccc' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>👶</div>
-              <p>No children linked to your account yet. Please contact admin to link your child.</p>
-            </div>
-          ) : (
-            <>
-              {children.length > 1 && (
-                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-                  {children.map(child => (
-                    <button key={child.id} onClick={() => selectChild(child)}
-                      style={{ background: selectedChild?.id === child.id ? s.turquoise : 'rgba(255,255,255,0.1)', color: selectedChild?.id === child.id ? s.navy : 'white', padding: '0.7rem 1.5rem', border: `1px solid ${s.turquoise}`, borderRadius: '25px', cursor: 'pointer', fontWeight: 'bold' }}>
-                      {`${child.firstName || ''} ${child.lastName || ''}`.trim()}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {selectedChild && (
-                <div>
-                  <div style={{ background: 'rgba(255,255,255,0.1)', padding: '1.5rem', borderRadius: '10px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '1.5rem' }}>
-                    <h3 style={{ color: s.turquoise, fontSize: '1.3rem', marginBottom: '1rem' }}>{`${selectedChild.firstName || ''} ${selectedChild.lastName || ''}`.trim()}</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', color: '#ccc', fontSize: '0.9rem' }}>
-                      <div><strong style={{ color: 'white' }}>Grade:</strong> {selectedChild.grade || 'N/A'}</div>
-                      <div><strong style={{ color: 'white' }}>Class:</strong> {selectedChild.class || 'N/A'}</div>
-                      <div><strong style={{ color: 'white' }}>School:</strong> {selectedChild.schoolName || 'N/A'}</div>
-                      <div><strong style={{ color: 'white' }}>Subjects:</strong> {selectedChild.subjects?.join(', ') || 'N/A'}</div>
-                    </div>
-                  </div>
+        <div style={{ marginTop: '0.75rem' }}>
+          <span style={muted}>{classInfo?.teacherName ? 'Class teacher(s): ' : 'No class teacher assigned yet.'}</span>
+          {classInfo?.teacherName && <strong>{classInfo.teacherName}</strong>}
+        </div>
+        {profile.subjects.length > 0 && (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.9rem' }}>
+            {profile.subjects.map(s => <Chip key={s} color="#8fd3ff">{s}</Chip>)}
+          </div>
+        )}
+      </div>
 
-                  <h3 style={{ color: s.turquoise, marginBottom: '1rem' }}>Progress</h3>
-                  {childProgress.length === 0 ? <p style={{ color: '#ccc', marginBottom: '1.5rem' }}>No progress records yet.</p>
-                    : childProgress.map(p => (
-                      <div key={p.id} style={{ background: 'rgba(255,255,255,0.1)', padding: '1rem', borderRadius: '8px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <div style={{ color: s.turquoise, fontWeight: 'bold' }}>{p.subject}</div>
-                          {p.comment && <div style={{ color: '#aaa', fontSize: '0.9rem' }}>{p.comment}</div>}
-                        </div>
-                        <div style={{ background: parseInt(p.mark) >= 50 ? '#2ecc71' : '#e74c3c', color: 'white', padding: '0.3rem 0.8rem', borderRadius: '15px', fontWeight: 'bold' }}>{p.mark}%</div>
-                      </div>
-                    ))}
+      <div style={panel}>
+        <h3 style={panelTitle}>Overall average</h3>
+        {average === null
+          ? <p style={muted}>No grades yet.</p>
+          : <div style={{ fontSize: '2.4rem', fontWeight: 700, color: gradeColor(average) }}>{average}%</div>}
+        {graded.length > 0 && <p style={{ ...muted, marginTop: '0.25rem' }}>from {graded.length} graded assignment{graded.length === 1 ? '' : 's'}</p>}
+      </div>
 
-                  <h3 style={{ color: s.turquoise, marginBottom: '1rem' }}>Assignments</h3>
-                  {childAssignments.length === 0 ? <p style={{ color: '#ccc' }}>No assignments yet.</p>
-                    : childAssignments.map(a => (
-                      <div key={a.id} style={{ background: 'rgba(255,255,255,0.1)', padding: '1rem', borderRadius: '8px', borderLeft: `4px solid ${s.turquoise}`, marginBottom: '0.8rem' }}>
-                        <div style={{ color: s.turquoise, fontWeight: 'bold' }}>{a.title}</div>
-                        <div style={{ color: '#ccc', fontSize: '0.9rem' }}>{a.subject} | Due: {a.dueDate || 'N/A'}</div>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </>
-          )}
+      <div style={panel}>
+        <h3 style={panelTitle}>Coming up at school</h3>
+        {events.length === 0 ? <p style={muted}>No upcoming events.</p> : events.map(ev => (
+          <div key={ev.id} style={{ marginBottom: '0.6rem' }}>
+            <div style={{ fontWeight: 600 }}>{ev.title}</div>
+            <div style={{ ...muted, fontSize: '0.8rem' }}>{fmtDate(ev.date)}{ev.location ? ` · ${ev.location}` : ''}</div>
+          </div>
+        ))}
       </div>
     </div>
+  )
+}
+
+function HomeworkTab({ data }) {
+  const list = sortByDue(data.homework)
+  if (list.length === 0) return <Empty>No homework has been set for this class yet.</Empty>
+  return (
+    <>
+      {list.map(h => (
+        <div key={h.id} style={{ ...panel, marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700 }}>{h.title}</span>
+            <Chip color={statusColor(h.status)}>{h.status}</Chip>
+          </div>
+          <div style={{ ...muted, fontSize: '0.8rem', marginTop: '0.3rem' }}>
+            {h.status === 'Not submitted' || h.status === 'Overdue' ? `${dueIn(h.dueDate) || ''}${h.dueDate ? ' · ' : ''}` : ''}
+            {h.dueDate ? `Due ${fmtDate(h.dueDate)}` : 'No due date'}
+          </div>
+          {h.description && <p style={{ ...muted, marginTop: '0.5rem' }}>{h.description}</p>}
+          {h.grade !== null && (
+            <div style={{ marginTop: '0.6rem' }}>
+              <strong style={{ color: gradeColor(h.grade) }}>{h.grade}%</strong>
+              {h.feedback && <div style={{ ...muted, marginTop: '0.3rem' }}>Teacher feedback: {h.feedback}</div>}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  )
+}
+
+function GradesTab({ data }) {
+  const list = [...data.graded].reverse()
+  if (list.length === 0) return <Empty>No grades yet. They will appear here once the teacher has marked work.</Empty>
+  return (
+    <>
+      {data.average !== null && (
+        <div style={{ ...panel, marginBottom: '1rem' }}>
+          <span style={muted}>Overall average </span>
+          <strong style={{ color: gradeColor(data.average), fontSize: '1.4rem' }}>{data.average}%</strong>
+        </div>
+      )}
+      {list.map(g => (
+        <div key={g.assignmentId} style={{ ...panel, marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+            <span style={{ fontWeight: 600 }}>{g.title}</span>
+            <strong style={{ color: gradeColor(g.grade) }}>{g.grade}%</strong>
+          </div>
+          <div style={{ height: '6px', borderRadius: '999px', background: 'rgba(255,255,255,0.12)', marginTop: '0.6rem' }}>
+            <div style={{ width: `${Math.max(0, Math.min(100, g.grade))}%`, height: '100%', borderRadius: '999px', background: gradeColor(g.grade) }} />
+          </div>
+          <div style={{ ...muted, fontSize: '0.8rem', marginTop: '0.4rem' }}>{fmtDate(g.date, false)}</div>
+          {g.feedback && <div style={{ ...muted, marginTop: '0.4rem' }}>Teacher feedback: {g.feedback}</div>}
+        </div>
+      ))}
+    </>
+  )
+}
+
+function ChildReport({ childId }) {
+  const [tab, setTab] = useState('Overview')
+  const { data, loading, error, reload } = useApiData(childId ? `/api/parent/children/${childId}/overview` : null)
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+        {TABS.map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{
+              cursor: 'pointer', padding: '0.5rem 1.1rem', borderRadius: '999px', color: 'white', fontSize: '0.9rem',
+              fontWeight: tab === t ? 700 : 400,
+              border: tab === t ? '1px solid rgba(var(--color-primary-rgb),0.9)' : '1px solid rgba(255,255,255,0.2)',
+              background: tab === t ? 'rgba(var(--color-primary-rgb),0.25)' : 'rgba(255,255,255,0.06)',
+            }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {loading && <p style={muted}>Loading...</p>}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+      {data && (
+        <>
+          {tab === 'Overview' && <OverviewTab data={data} />}
+          {tab === 'Homework' && <HomeworkTab data={data} />}
+          {tab === 'Grades' && <GradesTab data={data} />}
+        </>
+      )}
+    </>
+  )
+}
+
+export default function ParentMyChild() {
+  const { data, children, requests, selectedId, select, loading, error, reload } = useParentChildren()
+
+  return (
+    <StudentPage title="My Child" icon="👶" backPath="/parent/dashboard">
+      {loading && <p style={muted}>Loading...</p>}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+
+      {!loading && !error && (
+        children.length === 0 ? (
+          <>
+            <Empty>No child is linked to your account yet. Send a request below to get started.</Empty>
+            <div style={{ marginTop: '1rem' }}>
+              <AddChildPanel requests={requests} isVerified={!!data?.isVerified} onChanged={reload} startOpen />
+            </div>
+          </>
+        ) : (
+          <div style={{ display: 'grid', gap: '1.25rem' }}>
+            <ChildSwitcher items={children} selectedId={selectedId} onSelect={select} />
+            <ChildReport key={selectedId} childId={selectedId} />
+          </div>
+        )
+      )}
+    </StudentPage>
   )
 }
