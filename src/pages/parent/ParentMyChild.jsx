@@ -2,12 +2,13 @@ import React, { useState } from 'react'
 import StudentPage from '../../components/student/StudentPage'
 import AddChildPanel from '../../components/parent/AddChildPanel'
 import ChildSwitcher from '../../components/parent/ChildSwitcher'
+import ChildTutoring from '../../components/parent/ChildTutoring'
 import { Chip, ErrorBox, muted, panel, panelTitle } from '../../components/parent/parentUi'
 import { useParentChildren } from '../../hooks/useParentChildren'
 import { useApiData } from '../../hooks/useApiData'
 import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
 
-const TABS = ['Overview', 'Homework', 'Grades']
+const TABS = ['Overview', 'Homework', 'Grades', 'Tutoring']
 
 function Empty({ children }) {
   return <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>{children}</div>
@@ -132,9 +133,10 @@ function ChildReport({ childId }) {
         ))}
       </div>
 
-      {loading && <p style={muted}>Loading...</p>}
-      {error && <ErrorBox message={error} onRetry={reload} />}
-      {data && (
+      {tab === 'Tutoring' && <ChildTutoring childId={childId} />}
+      {tab !== 'Tutoring' && loading && <p style={muted}>Loading...</p>}
+      {tab !== 'Tutoring' && error && <ErrorBox message={error} onRetry={reload} />}
+      {tab !== 'Tutoring' && data && (
         <>
           {tab === 'Overview' && <OverviewTab data={data} />}
           {tab === 'Homework' && <HomeworkTab data={data} />}
