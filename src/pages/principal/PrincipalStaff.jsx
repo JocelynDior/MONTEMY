@@ -36,7 +36,7 @@ export default function PrincipalStaff() {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
                 <div>
                   <div style={{ fontWeight: 700 }}>{t.name}</div>
-                  <div style={muted}>{t.email}</div>
+                  <div style={muted}>{t.username ? `@${t.username}` : ''}</div>
                 </div>
                 <Chip color={t.isVerified ? '#7CFC9A' : '#ffe08a'}>{t.isVerified ? 'Verified' : 'Awaiting verification'}</Chip>
               </div>
@@ -61,7 +61,7 @@ export default function PrincipalStaff() {
             <div key={m.id} style={{ ...panel, marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontWeight: 700 }}>{m.name}</div>
-                <div style={muted}>{m.email}{m.department ? ` · ${m.department}` : ''}</div>
+                <div style={muted}>{m.username ? `@${m.username}` : ''}{m.department ? ` · ${m.department}` : ''}</div>
               </div>
               <Chip color={m.isVerified ? '#7CFC9A' : '#ffe08a'}>{m.isVerified ? 'Verified' : 'Awaiting verification'}</Chip>
             </div>
