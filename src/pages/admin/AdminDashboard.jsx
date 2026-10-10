@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import { logout } from '../../supabase/authHelpers'
 import { apiFetch } from '../../api/apiClient'
 import LinkRequests from '../../components/admin/LinkRequests'
+import PlatformStats from '../../components/admin/PlatformStats'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -113,6 +114,11 @@ export default function AdminDashboard() {
         ) : tab === 'overview' ? (
           <>
             <h2 style={{ color: C.turquoise, marginBottom: '1.25rem' }}>Overview</h2>
+            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+              {[['/admin/users', '👥 Users'], ['/admin/classes', '🏫 Classes'], ['/admin/organisations', '🏢 Organisations'], ['/admin/chat', '💬 Messages']].map(([path, text]) => (
+                <button key={path} onClick={() => navigate(path)} style={smallBtn}>{text}</button>
+              ))}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem' }}>
               {[
                 ['Total Users', stats.totalUsers, '👥'],
@@ -132,6 +138,7 @@ export default function AdminDashboard() {
                 <button onClick={() => setTab('pending')} style={smallBtn}>Review Now</button>
               </div>
             )}
+            <PlatformStats />
           </>
         ) : tab === 'links' ? (
           <LinkRequests onChanged={load} />
