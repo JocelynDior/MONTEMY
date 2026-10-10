@@ -4,8 +4,8 @@ import { useBranding } from '../../context/BrandingContext'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassNav, glassBtn, C } from '../../styles/glass'
 
-// Page frame for student sub-pages: background, branded navbar, title
-export default function StudentPage({ title, icon, children, maxWidth = 960 }) {
+// Page frame for student sub-pages (also used by the parent pages via backPath): background, branded navbar, title
+export default function StudentPage({ title, icon, children, maxWidth = 960, backPath = '/student/dashboard' }) {
   const navigate = useNavigate()
   const { appName, logoUrl } = useBranding()
 
@@ -24,7 +24,7 @@ export default function StudentPage({ title, icon, children, maxWidth = 960 }) {
           {logoUrl && <img src={logoUrl} alt="" style={{ height: '1.8rem' }} />}
           {appName}
         </span>
-        <button onClick={() => navigate('/student/dashboard')}
+        <button onClick={() => navigate(backPath)}
           style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem', margin: 0 }}>
           Dashboard
         </button>
