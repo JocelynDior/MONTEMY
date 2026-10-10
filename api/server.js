@@ -70,6 +70,9 @@ async function verifyToken(req, res, next) {
   if (error || !user) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
+  if (user.banned_until && new Date(user.banned_until) > new Date()) {
+    return res.status(403).json({ error: 'This account has been suspended.' })
+  }
   req.user = user
   next()
 }
@@ -2292,6 +2295,475 @@ app.get('/api/parent/children/:childId/tutor-sessions', verifyToken, parentLimit
   } catch (err) {
     console.error('Parent tutor sessions error:', err)
     res.status(500).json({ error: 'Could not load tutoring sessions. Please try again.' })
+  }
+})
+
+// ---------- Admin: platform management (Phase 14) ----------
+// Everything here sits behind verifyToken + requireAdmin and uses the service role key, so none of
+// it can be reached from the browser without an admin login.
+const ADMIN_USER_ROLES = ['student', 'teacher', 'parent', 'principal', 'tutor', 'schoolmember', 'admin']
+const USERS_PAGE_SIZE = 50
+const EXPORT_MAX_ROWS = 10000
+const SUSPEND_FOR = '876000h'   // about 100 years: effectively "until an admin lifts it"
+const ORG_TYPES = ['school', 'tutor']
+const USER_LIST_COLUMNS = 'id, email, name, role, org_id, is_verified, is_suspended, created_at'
+
+const escapeLike = (s) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
+
+// Applies the list filters (role, organisation, verified, suspended, search) to a users query
+function applyUserFilters(q, query) {
+  if (ADMIN_USER_ROLES.includes(query.role)) q = q.eq('role', query.role)
+  if (isUuid(query.orgId)) q = q.eq('org_id', query.orgId)
+  if (query.verified === 'true') q = q.eq('is_verified', true)
+  if (query.verified === 'false') q = q.eq('is_verified', false)
+  if (query.suspended === 'true') q = q.eq('is_suspended', true)
+  const term = String(query.search || '').trim().slice(0, 80)
+  if (term) q = term.includes('@') ? q.ilike('email', `%${escapeLike(term)}%`) : q.ilike('name', `%${escapeLike(term)}%`)
+  return q
+}
+
+async function orgNamesById(ids) {
+  const unique = [...new Set(ids.filter(Boolean))]
+  if (!unique.length) return {}
+  const rows = await fetchIn('organizations', 'id, name', 'id', unique)
+  return Object.fromEntries(rows.map(o => [o.id, o.name]))
+}
+
+// Spreadsheet programs run cells that start with = + - @ as formulas, so those get a leading '
+function csvCell(value) {
+  let s = value === null || value === undefined ? '' : String(value)
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+app.get('/api/admin/users', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1)
+    const from = (page - 1) * USERS_PAGE_SIZE
+    const { data, error, count } = await applyUserFilters(
+      supabase.from('users').select(USER_LIST_COLUMNS, { count: 'exact' }), req.query)
+      .order('created_at', { ascending: false }).order('id').range(from, from + USERS_PAGE_SIZE - 1)
+    if (error) throw error
+
+    const orgs = await orgNamesById((data || []).map(u => u.org_id))
+    res.json({
+      users: (data || []).map(u => ({
+        id: u.id,
+        name: u.name || '',
+        email: u.email || '',
+        role: u.role,
+        orgId: u.org_id,
+        orgName: orgs[u.org_id] || null,
+        isVerified: !!u.is_verified,
+        isSuspended: !!u.is_suspended,
+        createdAt: u.created_at,
+      })),
+      total: count || 0,
+      page,
+      pages: Math.max(1, Math.ceil((count || 0) / USERS_PAGE_SIZE)),
+    })
+  } catch (err) {
+    console.error('Admin users error:', err)
+    res.status(500).json({ error: 'Could not load users. Please try again.' })
+  }
+})
+
+// CSV of the users matching the current filters (built here so the browser never needs the full list)
+app.get('/api/admin/users/export', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = []
+    let truncated = false
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await applyUserFilters(supabase.from('users').select(USER_LIST_COLUMNS), req.query)
+        .order('created_at', { ascending: false }).order('id').range(from, from + PAGE_SIZE - 1)
+      if (error) throw error
+      rows.push(...(data || []))
+      if (!data || data.length < PAGE_SIZE) break
+      if (rows.length >= EXPORT_MAX_ROWS) { truncated = true; break }
+    }
+
+    const orgs = await orgNamesById(rows.map(u => u.org_id))
+    const header = ['Name', 'Email', 'Role', 'Organisation', 'Verified', 'Suspended', 'Signed up']
+    const lines = [header.map(csvCell).join(',')]
+    for (const u of rows) {
+      lines.push([
+        u.name, u.email, u.role, orgs[u.org_id] || '',
+        u.is_verified ? 'Yes' : 'No', u.is_suspended ? 'Yes' : 'No',
+        u.created_at ? new Date(u.created_at).toISOString().slice(0, 10) : '',
+      ].map(csvCell).join(','))
+    }
+    res.json({ csv: lines.join('\r\n'), count: rows.length, truncated })
+  } catch (err) {
+    console.error('Admin export error:', err)
+    res.status(500).json({ error: 'Could not export users. Please try again.' })
+  }
+})
+
+// Verify, suspend or unsuspend one user. Suspending blocks sign-in through Supabase Auth itself.
+app.post('/api/admin/users/:id/action', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const action = req.body?.action
+    if (!['verify', 'suspend', 'unsuspend'].includes(action)) return res.status(400).json({ error: 'Choose verify, suspend or unsuspend.' })
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'User not found.' })
+
+    const { data: target } = await supabase.from('users')
+      .select('id, role, is_verified, is_suspended').eq('id', req.params.id).maybeSingle()
+    if (!target) return res.status(404).json({ error: 'User not found.' })
+
+    if (action === 'verify') {
+      const { error } = await supabase.from('users').update({ is_verified: true }).eq('id', target.id)
+      if (error) throw error
+      if (!target.is_verified) await notifyUser(target.id, 'Your account has been verified. You now have full access.', 'success')
+      return res.json({ success: true })
+    }
+
+    if (target.id === req.user.id || target.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts cannot be suspended.' })
+    }
+
+    // Auth first: if it fails, the flag in the list never claims something that isn't true
+    const { error: authErr } = await supabase.auth.admin.updateUserById(target.id, {
+      ban_duration: action === 'suspend' ? SUSPEND_FOR : 'none',
+    })
+    if (authErr) {
+      console.error('Suspend auth error:', authErr)
+      return res.status(500).json({ error: 'Could not update the account: ' + authErr.message })
+    }
+    const { error } = await supabase.from('users').update({
+      is_suspended: action === 'suspend',
+      suspended_at: action === 'suspend' ? new Date().toISOString() : null,
+    }).eq('id', target.id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Admin user action error:', err)
+    res.status(500).json({ error: 'Could not update the user. Please try again.' })
+  }
+})
+
+// Permanently deletes a user and everything tied to their account
+app.delete('/api/admin/users/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'User not found.' })
+    const { data: target } = await supabase.from('users').select('id, role').eq('id', req.params.id).maybeSingle()
+    if (!target) return res.status(404).json({ error: 'User not found.' })
+    if (target.id === req.user.id || target.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts cannot be deleted.' })
+    }
+
+    for (const table of ROLE_TABLES) {
+      await supabase.from(table).delete().eq('user_id', target.id)
+    }
+    const { error: authErr } = await supabase.auth.admin.deleteUser(target.id)
+    if (authErr) {
+      console.error('Admin delete failed:', authErr)
+      return res.status(500).json({ error: 'Could not delete the user: ' + authErr.message })
+    }
+    await supabase.from('users').delete().eq('id', target.id) // no-op if it already cascaded
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Admin delete user error:', err)
+    res.status(500).json({ error: 'Could not delete the user. Please try again.' })
+  }
+})
+
+// Verify everyone still waiting in one organisation
+app.post('/api/admin/orgs/:orgId/verify-all', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.orgId)) return res.status(404).json({ error: 'Organisation not found.' })
+    const { data, error } = await supabase.from('users').update({ is_verified: true })
+      .eq('org_id', req.params.orgId).eq('is_verified', false).neq('role', 'admin').select('id')
+    if (error) throw error
+    res.json({ success: true, count: (data || []).length })
+  } catch (err) {
+    console.error('Verify all error:', err)
+    res.status(500).json({ error: 'Could not verify the users. Please try again.' })
+  }
+})
+
+// ----- Organisations -----
+
+app.get('/api/admin/orgs', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const orgs = await fetchAllRows(() => supabase.from('organizations')
+      .select('id, name, type, address, contact_email, country, is_active, created_at').order('name').order('id'))
+
+    // Member counts for up to 100 organisations (one cheap count query each)
+    const counted = orgs.slice(0, 100)
+    const counts = await Promise.all(counted.map(o =>
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('org_id', o.id)))
+
+    res.json({
+      orgs: orgs.map((o, i) => ({
+        id: o.id,
+        name: o.name,
+        type: o.type,
+        address: o.address || null,
+        contactEmail: o.contact_email || null,
+        country: o.country || null,
+        isActive: o.is_active !== false,
+        createdAt: o.created_at,
+        memberCount: i < counted.length ? (counts[i].count || 0) : null,
+      })),
+    })
+  } catch (err) {
+    console.error('Admin orgs error:', err)
+    res.status(500).json({ error: 'Could not load organisations. Please try again.' })
+  }
+})
+
+app.post('/api/admin/orgs', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {}
+    const name = typeof b.name === 'string' ? b.name.trim() : ''
+    if (name.length < 2 || name.length > 120) return res.status(400).json({ error: 'The name must be 2 to 120 characters.' })
+    if (!ORG_TYPES.includes(b.type)) return res.status(400).json({ error: 'Choose school or tutor organisation.' })
+    const address = typeof b.address === 'string' ? b.address.trim() : ''
+    if (address.length > 200) return res.status(400).json({ error: 'The address is too long (max 200 characters).' })
+    const country = typeof b.country === 'string' ? b.country.trim() : ''
+    if (country.length > 60) return res.status(400).json({ error: 'The country is too long (max 60 characters).' })
+    const contactEmail = typeof b.contactEmail === 'string' ? b.contactEmail.trim() : ''
+    if (contactEmail && (contactEmail.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))) {
+      return res.status(400).json({ error: 'That contact email does not look right.' })
+    }
+
+    const { data: dup } = await supabase.from('organizations').select('id').ilike('name', escapeLike(name)).limit(1)
+    if (dup && dup.length) return res.status(409).json({ error: 'An organisation with that name already exists.' })
+
+    const { data, error } = await supabase.from('organizations').insert({
+      name, type: b.type, address: address || null, country: country || null,
+      contact_email: contactEmail || null, is_active: true,
+    }).select('id').single()
+    if (error) throw error
+    res.json({ success: true, id: data.id })
+  } catch (err) {
+    console.error('Create org error:', err)
+    res.status(500).json({ error: 'Could not create the organisation. Please try again.' })
+  }
+})
+
+// ----- Classes -----
+
+app.get('/api/admin/teachers', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.query.orgId)) return res.status(400).json({ error: 'Choose an organisation first.' })
+    const { data, error } = await supabase.from('users').select('id, name, email')
+      .eq('org_id', req.query.orgId).eq('role', 'teacher').order('name').limit(500)
+    if (error) throw error
+    res.json({ teachers: (data || []).map(t => ({ id: t.id, name: displayName(t) })) })
+  } catch (err) {
+    console.error('Admin teachers error:', err)
+    res.status(500).json({ error: 'Could not load teachers.' })
+  }
+})
+
+app.get('/api/admin/classes', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const orgId = isUuid(req.query.orgId) ? req.query.orgId : null
+    const classRows = await fetchAllRows(() => {
+      let q = supabase.from('classes').select('id, name, grade, org_id')
+      if (orgId) q = q.eq('org_id', orgId)
+      return q.order('id')
+    })
+    const classIds = classRows.map(c => c.id)
+
+    const [orgs, links, studentRows] = await Promise.all([
+      orgNamesById(classRows.map(c => c.org_id)),
+      fetchIn('teacher_classes', 'teacher_id, class_id', 'class_id', classIds, ['teacher_id', 'class_id']),
+      fetchIn('students', 'class_id', 'class_id', classIds),
+    ])
+    const people = await usersById(links.map(l => l.teacher_id))
+
+    const studentCount = {}
+    for (const r of studentRows) studentCount[r.class_id] = (studentCount[r.class_id] || 0) + 1
+    const teachersOf = {}
+    for (const l of links) if (people[l.teacher_id]) (teachersOf[l.class_id] ||= []).push({ id: l.teacher_id, name: displayName(people[l.teacher_id]) })
+
+    const list = classRows.map(c => ({
+      ...shapeClass(c),
+      orgId: c.org_id,
+      orgName: orgs[c.org_id] || null,
+      students: studentCount[c.id] || 0,
+      teachers: teachersOf[c.id] || [],
+    }))
+    list.sort((a, b) => String(a.orgName || '').localeCompare(String(b.orgName || '')) ||
+      (Number(a.grade) || 0) - (Number(b.grade) || 0) || String(a.letter).localeCompare(String(b.letter)))
+    res.json({ classes: list })
+  } catch (err) {
+    console.error('Admin classes error:', err)
+    res.status(500).json({ error: 'Could not load classes. Please try again.' })
+  }
+})
+
+// A teacher can only be attached to a class in their own organisation
+async function teacherForOrg(teacherId, orgId) {
+  if (!isUuid(teacherId)) return null
+  const { data } = await supabase.from('users').select('id, role, org_id').eq('id', teacherId).maybeSingle()
+  return data && data.role === 'teacher' && data.org_id === orgId ? data : null
+}
+
+app.post('/api/admin/classes', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {}
+    if (!isUuid(b.orgId)) return res.status(400).json({ error: 'Please choose an organisation.' })
+    const grade = cleanGrade(b.grade)
+    const letter = cleanLetter(b.letter)
+    if (!grade) return res.status(400).json({ error: 'Please choose a grade from 1 to 12.' })
+    if (!letter) return res.status(400).json({ error: 'Please choose a class letter from A to F.' })
+
+    const { data: org } = await supabase.from('organizations').select('id').eq('id', b.orgId).maybeSingle()
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+
+    let teacher = null
+    if (b.teacherId) {
+      teacher = await teacherForOrg(b.teacherId, b.orgId)
+      if (!teacher) return res.status(400).json({ error: 'That teacher does not belong to this organisation.' })
+    }
+
+    const { data: existing } = await supabase.from('classes').select('id')
+      .eq('org_id', b.orgId).eq('grade', grade).eq('name', letter).maybeSingle()
+    if (existing) return res.status(409).json({ error: `Class ${grade}${letter} already exists in this organisation.` })
+
+    const { data, error } = await supabase.from('classes')
+      .insert({ org_id: b.orgId, grade, name: letter }).select('id').single()
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: `Class ${grade}${letter} already exists in this organisation.` })
+      throw error
+    }
+    if (teacher) {
+      const { error: linkErr } = await supabase.from('teacher_classes').insert({ teacher_id: teacher.id, class_id: data.id })
+      if (linkErr) throw linkErr
+    }
+    res.json({ success: true, id: data.id })
+  } catch (err) {
+    console.error('Admin create class error:', err)
+    res.status(500).json({ error: 'Could not create the class. Please try again.' })
+  }
+})
+
+app.put('/api/admin/classes/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Class not found.' })
+    const grade = cleanGrade(req.body?.grade)
+    const letter = cleanLetter(req.body?.letter)
+    if (!grade) return res.status(400).json({ error: 'Please choose a grade from 1 to 12.' })
+    if (!letter) return res.status(400).json({ error: 'Please choose a class letter from A to F.' })
+
+    const { data: cls } = await supabase.from('classes').select('id, org_id').eq('id', req.params.id).maybeSingle()
+    if (!cls) return res.status(404).json({ error: 'Class not found.' })
+
+    const { data: clash } = await supabase.from('classes').select('id')
+      .eq('org_id', cls.org_id).eq('grade', grade).eq('name', letter).neq('id', cls.id).maybeSingle()
+    if (clash) return res.status(409).json({ error: `Class ${grade}${letter} already exists in this organisation.` })
+
+    const { error } = await supabase.from('classes').update({ grade, name: letter }).eq('id', cls.id)
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: `Class ${grade}${letter} already exists in this organisation.` })
+      throw error
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Admin update class error:', err)
+    res.status(500).json({ error: 'Could not save the class. Please try again.' })
+  }
+})
+
+app.delete('/api/admin/classes/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Class not found.' })
+    const { data: cls } = await supabase.from('classes').select('id').eq('id', req.params.id).maybeSingle()
+    if (!cls) return res.status(404).json({ error: 'Class not found.' })
+
+    // Students stay on the platform; they just no longer belong to this class
+    const { error: stuErr } = await supabase.from('students').update({ class_id: null }).eq('class_id', cls.id)
+    if (stuErr) throw stuErr
+    const { error } = await supabase.from('classes').delete().eq('id', cls.id)
+    if (error) {
+      if (error.code === '23503') return res.status(409).json({ error: 'This class still has linked records (such as assignments) that block deleting it.' })
+      throw error
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Admin delete class error:', err)
+    res.status(500).json({ error: 'Could not delete the class. Please try again.' })
+  }
+})
+
+app.post('/api/admin/classes/:id/teachers', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Class not found.' })
+    const { data: cls } = await supabase.from('classes').select('id, org_id').eq('id', req.params.id).maybeSingle()
+    if (!cls) return res.status(404).json({ error: 'Class not found.' })
+    const teacher = await teacherForOrg(req.body?.teacherId, cls.org_id)
+    if (!teacher) return res.status(400).json({ error: 'That teacher does not belong to this class\'s organisation.' })
+
+    const { error } = await supabase.from('teacher_classes')
+      .upsert({ teacher_id: teacher.id, class_id: cls.id }, { onConflict: 'teacher_id,class_id' })
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Admin add class teacher error:', err)
+    res.status(500).json({ error: 'Could not add the teacher. Please try again.' })
+  }
+})
+
+app.delete('/api/admin/classes/:id/teachers/:teacherId', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id) || !isUuid(req.params.teacherId)) return res.status(404).json({ error: 'Not found.' })
+    const { error } = await supabase.from('teacher_classes')
+      .delete().eq('class_id', req.params.id).eq('teacher_id', req.params.teacherId)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Admin remove class teacher error:', err)
+    res.status(500).json({ error: 'Could not remove the teacher. Please try again.' })
+  }
+})
+
+// ----- Platform statistics -----
+
+app.get('/api/admin/platform-stats', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const count = (q) => q.then(r => { if (r.error) throw r.error; return r.count || 0 })
+    const users = () => supabase.from('users').select('id', { count: 'exact', head: true })
+
+    const days = 30
+    const since = new Date()
+    since.setUTCHours(0, 0, 0, 0)
+    since.setUTCDate(since.getUTCDate() - (days - 1))
+
+    const [total, pending, suspended, orgsTotal, orgsActive, byRoleCounts, recent] = await Promise.all([
+      count(users()),
+      count(users().eq('is_verified', false).neq('role', 'admin')),
+      count(users().eq('is_suspended', true)),
+      count(supabase.from('organizations').select('id', { count: 'exact', head: true })),
+      count(supabase.from('organizations').select('id', { count: 'exact', head: true }).eq('is_active', true)),
+      Promise.all(ADMIN_USER_ROLES.map(role => count(users().eq('role', role)))),
+      fetchAllRows(() => supabase.from('users').select('id, created_at').gte('created_at', since.toISOString()).order('id')),
+    ])
+
+    const perDay = {}
+    for (const u of recent) {
+      const key = new Date(u.created_at).toISOString().slice(0, 10)
+      perDay[key] = (perDay[key] || 0) + 1
+    }
+    const signups = []
+    for (let i = 0; i < days; i++) {
+      const d = new Date(since)
+      d.setUTCDate(since.getUTCDate() + i)
+      const key = d.toISOString().slice(0, 10)
+      signups.push({ date: key, count: perDay[key] || 0 })
+    }
+
+    res.json({
+      totals: { users: total, pending, suspended, organizations: orgsTotal, activeOrganizations: orgsActive },
+      byRole: Object.fromEntries(ADMIN_USER_ROLES.map((r, i) => [r, byRoleCounts[i]])),
+      signups,
+      signupsTotal: recent.length,
+    })
+  } catch (err) {
+    console.error('Platform stats error:', err)
+    res.status(500).json({ error: 'Could not load platform statistics. Please try again.' })
   }
 })
 
