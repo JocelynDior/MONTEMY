@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { logout } from '../../supabase/authHelpers'
 import { apiFetch } from '../../api/apiClient'
+import LinkRequests from '../../components/admin/LinkRequests'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -14,6 +15,7 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState('overview')
   const [stats, setStats] = useState({ totalUsers: 0, pendingUsers: 0, organizations: 0 })
   const [pending, setPending] = useState([])
+  const [linkCount, setLinkCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState(null)
@@ -22,12 +24,14 @@ export default function AdminDashboard() {
   const load = useCallback(async () => {
     setError('')
     try {
-      const [s, p] = await Promise.all([
+      const [s, p, l] = await Promise.all([
         apiFetch('/api/admin/stats'),
         apiFetch('/api/admin/pending-users'),
+        apiFetch('/api/admin/link-requests?status=pending').catch(() => null),
       ])
       setStats(s)
       setPending(p.users)
+      setLinkCount(l?.requests?.length || 0)
     } catch (err) {
       console.error(err)
       setError(err.message || 'Could not load data. The server may be waking up — try again in a few seconds.')
@@ -84,12 +88,12 @@ export default function AdminDashboard() {
       <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem 1.5rem' }}>
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-          {[['overview', 'Overview'], ['pending', 'Pending']].map(([key, label]) => (
+          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links']].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               style={{ border: 'none', cursor: 'pointer', padding: '0.6rem 1.4rem', borderRadius: '8px', fontWeight: 600,
                 background: tab === key ? 'rgba(var(--color-primary-rgb),0.85)' : 'rgba(255,255,255,0.08)',
                 color: tab === key ? C.navy : 'rgba(255,255,255,0.7)' }}>
-              {label}{key === 'pending' && pendingCount > 0 ? ` (${pendingCount})` : ''}
+              {label}{key === 'pending' && pendingCount > 0 ? ` (${pendingCount})` : ''}{key === 'links' && linkCount > 0 ? ` (${linkCount})` : ''}
             </button>
           ))}
           <button onClick={() => { setLoading(true); load() }}
@@ -129,6 +133,8 @@ export default function AdminDashboard() {
               </div>
             )}
           </>
+        ) : tab === 'links' ? (
+          <LinkRequests onChanged={load} />
         ) : (
           <>
             <h2 style={{ color: C.turquoise, marginBottom: '1.25rem' }}>Pending Verification ({pendingCount})</h2>
