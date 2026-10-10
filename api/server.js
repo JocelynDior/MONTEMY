@@ -219,10 +219,15 @@ app.post('/api/admin/register', adminRegisterLimiter, async (req, res) => {
     })
   }
 
+  // Admins don't pick a username; give them a generated one so the column is never empty
+  const adminUsername = (name.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 14) || 'admin')
+    + '.' + data.user.id.replace(/-/g, '').slice(0, 4)
+
   const { error: profileErr } = await supabase.from('users').insert({
     id: data.user.id,
     email,
     name,
+    username: adminUsername,
     role: 'admin',
     is_verified: true,
     email_verified: true,
@@ -307,13 +312,51 @@ const registerLimiter = rateLimit({
   message: { error: 'Too many attempts. Try again later.' },
 })
 
+// ---------- Usernames ----------
+// Usernames are what other users see; emails are visible to admins only.
+// 3-20 characters: lowercase letters, digits, "_" and "."
+const USERNAME_RE = /^[a-z0-9._]{3,20}$/
+const cleanUsername = (u) => String(u ?? '').trim().toLowerCase()
+
+async function usernameTaken(username) {
+  const { data } = await supabase.from('users').select('id').ilike('username', username).limit(1)
+  return !!(data && data.length)
+}
+
+// Public: lets the Register page show "available / taken" while typing
+const usernameLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 40,
+  message: { error: 'Too many checks. Wait a moment and try again.' },
+})
+app.get('/api/auth/username-available', usernameLimiter, async (req, res) => {
+  const u = cleanUsername(req.query.u)
+  if (!USERNAME_RE.test(u)) {
+    return res.json({ available: false, reason: 'Use 3-20 letters, numbers, "." or "_".' })
+  }
+  try {
+    const taken = await usernameTaken(u)
+    res.json({ available: !taken, reason: taken ? 'That username is taken.' : null })
+  } catch (err) {
+    console.error('Username check failed:', err)
+    res.status(500).json({ error: 'Could not check that username.' })
+  }
+})
+
 // "Verify later" signup: account is created with the email pre-approved so the
 // user can log in now. users.email_verified stays false until they verify.
 app.post('/api/auth/register-later', registerLimiter, async (req, res) => {
   const { name, email, password, role, orgId } = req.body || {}
+  const username = cleanUsername(req.body?.username)
 
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'Name, email and password are required.' })
+  }
+  if (!USERNAME_RE.test(username)) {
+    return res.status(400).json({ error: 'Choose a username of 3-20 letters, numbers, "." or "_".' })
+  }
+  if (await usernameTaken(username)) {
+    return res.status(409).json({ error: 'That username is taken. Please choose another.' })
   }
   if (password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' })
@@ -332,7 +375,7 @@ app.post('/api/auth/register-later', registerLimiter, async (req, res) => {
   }
 
   // The database trigger creates the users + role rows from this metadata
-  const metadata = { name, role, org_id: orgId }
+  const metadata = { name, role, org_id: orgId, username }
   if (role === 'student') {
     const g = cleanGrade(req.body.grade)
     const subs = cleanSubjects(req.body.subjects)
@@ -636,7 +679,7 @@ async function teacherTeaches(userId, classId) {
   return !!data
 }
 
-// { classId: [{ id, name, email }] } built from students.class_id
+// { classId: [{ id, name, username }] } built from students.class_id (no emails: only admins see those)
 async function studentsByClass(classIds) {
   const result = Object.fromEntries(classIds.map(id => [id, []]))
   if (!classIds.length) return result
@@ -645,12 +688,12 @@ async function studentsByClass(classIds) {
   const userIds = (rows || []).map(r => r.user_id).filter(Boolean)
   const people = {}
   if (userIds.length) {
-    const { data: users } = await supabase.from('users').select('id, name, email').in('id', userIds)
+    const { data: users } = await supabase.from('users').select('id, name, username').in('id', userIds)
     for (const u of users || []) people[u.id] = u
   }
   for (const r of rows || []) {
     const u = people[r.user_id]
-    if (u) result[r.class_id].push({ id: u.id, name: u.name || u.email, email: u.email })
+    if (u) result[r.class_id].push({ id: u.id, name: u.name || u.username || 'Unknown', username: u.username || '' })
   }
   for (const id of classIds) result[id].sort((a, b) => String(a.name).localeCompare(String(b.name)))
   return result
@@ -1182,11 +1225,11 @@ async function notifyUser(userId, content, type = 'info') {
   if (error) console.error('Notification insert failed:', error.message)
 }
 
-// { userId: { id, name, email } }
+// { userId: { id, name, username, email } }. email is for admin-only routes; everything else must not return it.
 async function usersById(ids) {
   const unique = [...new Set(ids.filter(Boolean))]
   if (!unique.length) return {}
-  const { data } = await supabase.from('users').select('id, name, email').in('id', unique)
+  const { data } = await supabase.from('users').select('id, name, username, email').in('id', unique)
   return Object.fromEntries((data || []).map(u => [u.id, u]))
 }
 
@@ -1204,7 +1247,8 @@ async function studentBasics(userIds) {
   return Object.fromEntries((rows || []).map(r => [r.user_id, { grade: r.grade ?? null, classLabel: classes[r.class_id] || null }]))
 }
 
-const displayName = (u) => (u && (u.name || u.email)) || 'Unknown'
+// Never falls back to the email address: emails are visible to admins only
+const displayName = (u) => (u && (u.name || u.username)) || 'Unknown'
 
 // Accept or reject a pending request. The conditional update means the first decision wins,
 // even if the student and an admin click at the same moment.
@@ -1775,9 +1819,9 @@ app.get('/api/principal/staff', verifyToken, principalLimiter, async (req, res) 
     if (!user) return
 
     const [teacherUsers, memberUsers, classRows] = await Promise.all([
-      fetchAllRows(() => supabase.from('users').select('id, name, email, is_verified')
+      fetchAllRows(() => supabase.from('users').select('id, name, username, is_verified')
         .eq('org_id', user.org_id).eq('role', 'teacher').order('name').order('id')),
-      fetchAllRows(() => supabase.from('users').select('id, name, email, is_verified')
+      fetchAllRows(() => supabase.from('users').select('id, name, username, is_verified')
         .eq('org_id', user.org_id).eq('role', 'schoolmember').order('name').order('id')),
       fetchAllRows(() => supabase.from('classes').select('id, name, grade').eq('org_id', user.org_id).order('id')),
     ])
@@ -1803,7 +1847,7 @@ app.get('/api/principal/staff', verifyToken, principalLimiter, async (req, res) 
       return {
         id: t.id,
         name: displayName(t),
-        email: t.email || '',
+        username: t.username || '',
         isVerified: !!t.is_verified,
         classes: list.map(c => c.name),
         classCount: list.length,
@@ -1815,7 +1859,7 @@ app.get('/api/principal/staff', verifyToken, principalLimiter, async (req, res) 
     const members = memberUsers.map(m => ({
       id: m.id,
       name: displayName(m),
-      email: m.email || '',
+      username: m.username || '',
       isVerified: !!m.is_verified,
       department: departments[m.id] || null,
     }))
@@ -2764,6 +2808,233 @@ app.get('/api/admin/platform-stats', verifyToken, requireAdmin, async (req, res)
   } catch (err) {
     console.error('Platform stats error:', err)
     res.status(500).json({ error: 'Could not load platform statistics. Please try again.' })
+  }
+})
+
+// ---------- Messaging (Phase 15) ----------
+// WhatsApp-style 1:1 chat. Anyone can message anyone in their own organisation. Admins can message
+// anyone, and anyone can reply to an admin who has messaged them. Users see names + usernames only;
+// emails are returned to admins only. All writes go through here (the browser only reads, via Realtime).
+const messagesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+const sendMessageLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 40,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'You are sending messages too quickly. Wait a moment and try again.' },
+})
+
+const MAX_MESSAGE_LENGTH = 4000 // UUID_RE is declared earlier in this file
+
+// The signed-in user's row, or null (and a response already sent) if they can't use messaging
+async function messagingUser(req, res) {
+  const { data: me, error } = await supabase.from('users')
+    .select('id, name, username, role, org_id, is_verified, is_suspended').eq('id', req.user.id).maybeSingle()
+  if (error) { res.status(500).json({ error: 'Could not load your account.' }); return null }
+  if (!me) { res.status(403).json({ error: 'Account not found.' }); return null }
+  if (me.is_suspended) { res.status(403).json({ error: 'This account has been suspended.' }); return null }
+  return me
+}
+
+const shapeChatUser = (u, viewer) => ({
+  id: u.id,
+  name: u.name || u.username || 'Unknown',
+  username: u.username || '',
+  role: u.role,
+  ...(viewer.role === 'admin' ? { email: u.email || '' } : {}),
+})
+
+async function canMessage(me, other) {
+  if (!other || other.is_suspended || other.id === me.id) return false
+  if (me.role === 'admin') return true
+  if (other.role === 'admin') {
+    // Only a reply: the admin must have written to this user first
+    const { data } = await supabase.from('messages').select('id')
+      .eq('sender_id', other.id).eq('receiver_id', me.id).limit(1)
+    return !!(data && data.length)
+  }
+  return !!me.org_id && me.org_id === other.org_id
+}
+
+// People the user can start a chat with: same organisation (admins: everyone). ?q= searches, ?role= filters
+app.get('/api/messages/contacts', verifyToken, messagesLimiter, async (req, res) => {
+  try {
+    const me = await messagingUser(req, res)
+    if (!me) return
+    if (me.role !== 'admin' && !me.org_id) return res.json({ contacts: [] })
+
+    const isAdmin = me.role === 'admin'
+    let q = supabase.from('users')
+      .select(`id, name, username, role, org_id, is_suspended${isAdmin ? ', email' : ''}`)
+      .neq('id', me.id).neq('role', 'admin').eq('is_suspended', false)
+    if (!isAdmin) q = q.eq('org_id', me.org_id)
+
+    const role = String(req.query.role || '')
+    if (ROLE_LIST.includes(role)) q = q.eq('role', role)
+
+    const term = String(req.query.q || '').trim().slice(0, 40).replace(/^@/, '')
+    if (term) {
+      const t = escapeLike(term).replace(/[,()]/g, ' ')
+      q = q.or(`name.ilike.%${t}%,username.ilike.%${t}%${isAdmin ? `,email.ilike.%${t}%` : ''}`)
+    }
+
+    const { data, error } = await q.order('name').order('id').limit(50)
+    if (error) throw error
+    res.json({ contacts: (data || []).map(u => shapeChatUser(u, me)) })
+  } catch (err) {
+    console.error('Contacts failed:', err)
+    res.status(500).json({ error: 'Could not load contacts.' })
+  }
+})
+
+async function unreadTotal(userId) {
+  const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true })
+    .eq('receiver_id', userId).eq('read', false)
+  return count || 0
+}
+
+// Number shown on the navbar badge
+app.get('/api/messages/unread-count', verifyToken, messagesLimiter, async (req, res) => {
+  try {
+    res.json({ unread: await unreadTotal(req.user.id) })
+  } catch (err) {
+    console.error('Unread count failed:', err)
+    res.status(500).json({ error: 'Could not load unread count.' })
+  }
+})
+
+// One row per conversation: the other person, the latest message and the unread count
+app.get('/api/messages/inbox', verifyToken, messagesLimiter, async (req, res) => {
+  try {
+    const me = await messagingUser(req, res)
+    if (!me) return
+
+    const { data: rows, error } = await supabase.from('messages')
+      .select('id, sender_id, receiver_id, content, read, created_at')
+      .or(`sender_id.eq.${me.id},receiver_id.eq.${me.id}`)
+      .order('created_at', { ascending: false }).limit(500)
+    if (error) throw error
+
+    const convos = new Map()
+    for (const m of rows || []) {
+      const otherId = m.sender_id === me.id ? m.receiver_id : m.sender_id
+      if (!otherId) continue
+      if (!convos.has(otherId)) {
+        convos.set(otherId, {
+          lastMessage: { content: m.content, createdAt: m.created_at, fromMe: m.sender_id === me.id },
+          unread: 0,
+        })
+      }
+      if (m.receiver_id === me.id && !m.read) convos.get(otherId).unread += 1
+    }
+
+    const ids = [...convos.keys()]
+    const others = {}
+    if (ids.length) {
+      const { data: users } = await supabase.from('users')
+        .select('id, name, username, role, email').in('id', ids)
+      for (const u of users || []) others[u.id] = u
+    }
+
+    const conversations = ids.filter(id => others[id]).map(id => ({
+      user: shapeChatUser(others[id], me),
+      ...convos.get(id),
+    }))
+    res.json({ conversations, totalUnread: await unreadTotal(me.id) })
+  } catch (err) {
+    console.error('Inbox failed:', err)
+    res.status(500).json({ error: 'Could not load your messages.' })
+  }
+})
+
+// A conversation with one person (newest 100). Opening it marks their messages to you as read.
+app.get('/api/messages/thread/:userId', verifyToken, messagesLimiter, async (req, res) => {
+  try {
+    const me = await messagingUser(req, res)
+    if (!me) return
+    const otherId = req.params.userId
+    if (!UUID_RE.test(otherId)) return res.status(400).json({ error: 'Invalid user.' })
+
+    const { data: other } = await supabase.from('users')
+      .select('id, name, username, role, org_id, is_suspended, email').eq('id', otherId).maybeSingle()
+    if (!other) return res.status(404).json({ error: 'User not found.' })
+
+    const { data: rows, error } = await supabase.from('messages')
+      .select('id, sender_id, receiver_id, content, read, created_at')
+      .or(`and(sender_id.eq.${me.id},receiver_id.eq.${otherId}),and(sender_id.eq.${otherId},receiver_id.eq.${me.id})`)
+      .order('created_at', { ascending: false }).limit(100)
+    if (error) throw error
+
+    await supabase.from('messages').update({ read: true })
+      .eq('sender_id', otherId).eq('receiver_id', me.id).eq('read', false)
+
+    const messages = (rows || []).reverse().map(m => ({
+      id: m.id,
+      fromMe: m.sender_id === me.id,
+      content: m.content,
+      read: !!m.read || m.receiver_id === me.id,
+      createdAt: m.created_at,
+    }))
+    res.json({
+      user: shapeChatUser(other, me),
+      messages,
+      canSend: (me.is_verified || me.role === 'admin') && await canMessage(me, other),
+    })
+  } catch (err) {
+    console.error('Thread failed:', err)
+    res.status(500).json({ error: 'Could not load this conversation.' })
+  }
+})
+
+// Mark everything from one person as read (used when a live message arrives in an open chat)
+app.post('/api/messages/read/:userId', verifyToken, messagesLimiter, async (req, res) => {
+  try {
+    if (!UUID_RE.test(req.params.userId)) return res.status(400).json({ error: 'Invalid user.' })
+    await supabase.from('messages').update({ read: true })
+      .eq('sender_id', req.params.userId).eq('receiver_id', req.user.id).eq('read', false)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Mark read failed:', err)
+    res.status(500).json({ error: 'Could not update messages.' })
+  }
+})
+
+app.post('/api/messages', verifyToken, sendMessageLimiter, async (req, res) => {
+  try {
+    const me = await messagingUser(req, res)
+    if (!me) return
+    if (!me.is_verified && me.role !== 'admin') {
+      return res.status(403).json({ error: 'You can send messages once an admin has verified your account.' })
+    }
+
+    const { to } = req.body || {}
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : ''
+    if (!UUID_RE.test(String(to))) return res.status(400).json({ error: 'Choose who to message.' })
+    if (!content) return res.status(400).json({ error: 'Type a message first.' })
+    if (content.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ error: `Message is too long (max ${MAX_MESSAGE_LENGTH} characters).` })
+    }
+
+    const { data: other } = await supabase.from('users')
+      .select('id, role, org_id, is_suspended').eq('id', to).maybeSingle()
+    if (!other) return res.status(404).json({ error: 'User not found.' })
+    if (!(await canMessage(me, other))) {
+      return res.status(403).json({ error: 'You can only message people in your own school or organisation.' })
+    }
+
+    const { data: msg, error } = await supabase.from('messages')
+      .insert({ sender_id: me.id, receiver_id: to, content })
+      .select('id, content, created_at').single()
+    if (error) throw error
+
+    res.json({ message: { id: msg.id, fromMe: true, content: msg.content, read: false, createdAt: msg.created_at } })
+  } catch (err) {
+    console.error('Send message failed:', err)
+    res.status(500).json({ error: 'Could not send your message.' })
   }
 })
 
