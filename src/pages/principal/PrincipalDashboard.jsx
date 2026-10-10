@@ -7,7 +7,7 @@ import { fmtDate, gradeColor } from '../../components/student/studentUtils'
 import { glassBtn } from '../../styles/glass'
 
 const cards = [
-  { icon: '💬', title: 'Messages', description: 'Communicate with teachers, parents and staff', path: '/principal/messages', requiresVerification: true },
+  { icon: '💬', title: 'Messages', description: 'Communicate with teachers, parents and staff', path: '/messages', requiresVerification: true },
   { icon: '📅', title: 'School Events', description: 'Manage and view upcoming school events', path: '/principal/events', requiresVerification: true },
   { icon: '📊', title: 'School Statistics', description: 'View school performance and analytics', path: '/principal/stats', requiresVerification: true },
   { icon: '👥', title: 'Staff Management', description: 'Oversee staff and faculty', path: '/principal/staff', requiresVerification: true },
