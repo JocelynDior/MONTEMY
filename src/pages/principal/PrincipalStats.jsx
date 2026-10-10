@@ -1,89 +1,130 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../supabase/client'
+import React, { useEffect, useState } from 'react'
+import StudentPage from '../../components/student/StudentPage'
+import { ErrorBox, muted, panel, panelTitle } from '../../components/parent/parentUi'
+import { useApiData } from '../../hooks/useApiData'
+import { gradeColor } from '../../components/student/studentUtils'
+import { glassInput } from '../../styles/glass'
 
-const s = { navy: 'var(--color-bg)', turquoise: 'var(--color-primary)' }
+const th = { textAlign: 'left', padding: '0.5rem 0.75rem', color: 'rgba(255,255,255,0.6)', fontWeight: 600, fontSize: '0.8rem', whiteSpace: 'nowrap' }
+const td = { padding: '0.55rem 0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', whiteSpace: 'nowrap' }
+
+function Avg({ value }) {
+  return value === null || value === undefined
+    ? <span style={muted}>—</span>
+    : <strong style={{ color: gradeColor(value) }}>{value}%</strong>
+}
 
 export default function PrincipalStats() {
-  const navigate = useNavigate()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [stats, setStats] = useState({ students: 0, teachers: 0, parents: 0, classes: 0, assignments: 0, events: 0 })
-  const [loading, setLoading] = useState(true)
-  const [schoolId, setSchoolId] = useState(null)
+  const [input, setInput] = useState('50')
+  const [threshold, setThreshold] = useState(50)
 
+  // Apply the threshold 600ms after the principal stops typing
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async user => {
-      if (!user) return navigate('/')
-      try {
-        const snap = await getDoc(doc(db, 'principals', user.uid))
-        const sid = snap.exists() ? snap.data().schoolId : null
-        setSchoolId(sid)
-        loadStats(sid)
-      } catch { loadStats(null) }
-    })
-    return () => unsub()
-  }, [])
+    const n = Math.round(Number(input))
+    if (!Number.isFinite(n) || n < 1 || n > 100) return
+    const t = setTimeout(() => setThreshold(n), 600)
+    return () => clearTimeout(t)
+  }, [input])
 
-  const loadStats = async (sid) => {
-    setLoading(true)
-    try {
-      const getCount = async (col, field) => {
-        const q = field && sid ? query(collection(db, col), where(field, '==', sid)) : collection(db, col)
-        const snap = await getDocs(q)
-        return snap.size
-      }
-      const [students, teachers, parents, classes, assignments, events] = await Promise.all([
-        getCount('students', 'schoolId'), getCount('teachers', 'schoolId'),
-        getCount('parents', 'schoolId'), getCount('classes', 'schoolId'),
-        getCount('assignments', 'schoolId'), getCount('events', null)
-      ])
-      setStats({ students, teachers, parents, classes, assignments, events })
-    } catch (err) { console.error(err) }
-    setLoading(false)
-  }
-
-  const statCards = [
-    { icon: '🎓', label: 'Students', value: stats.students },
-    { icon: '📚', label: 'Teachers', value: stats.teachers },
-    { icon: '👨‍👩‍👧', label: 'Parents', value: stats.parents },
-    { icon: '🏫', label: 'Classes', value: stats.classes },
-    { icon: '📝', label: 'Assignments', value: stats.assignments },
-    { icon: '📅', label: 'Events', value: stats.events },
-  ]
+  const { data, loading, error, reload } = useApiData(`/api/principal/stats?threshold=${threshold}`)
 
   return (
-    <div style={{ background: s.navy, minHeight: '100vh', color: 'white', fontFamily: 'Arial' }}>
-      <nav style={{ background: s.turquoise, padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
-        <div style={{ color: s.navy, fontSize: '1.5rem', fontWeight: 'bold' }}>MONTEMY</div>
-        <div style={{ position: 'relative' }}>
-          <button onClick={() => setMenuOpen(!menuOpen)} style={{ background: s.navy, color: s.turquoise, width: '40px', height: '40px', border: 'none', borderRadius: '50%', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '3px', padding: '8px' }}>
-            {[0,1,2].map(i => <div key={i} style={{ width: '20px', height: '2px', background: s.turquoise }} />)}
-          </button>
-          {menuOpen && (
-            <div style={{ position: 'absolute', right: 0, top: '50px', background: s.turquoise, minWidth: '160px', borderRadius: '10px', zIndex: 10, overflow: 'hidden' }}>
-              {[['Back to Dashboard', () => navigate('/principal/dashboard')], ['Logout', async () => { await signOut(auth); navigate('/') }]].map(([label, fn]) => (
-                <div key={label} onClick={() => { setMenuOpen(false); fn() }} style={{ color: s.navy, padding: '12px 16px', cursor: 'pointer', fontWeight: 'bold' }}>{label}</div>
-              ))}
+    <StudentPage title="School Statistics" icon="📊" backPath="/principal/dashboard" maxWidth={1000}>
+      {loading && !data && <p style={muted}>Loading...</p>}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+
+      {data && (
+        <div style={{ display: 'grid', gap: '1.25rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.25rem' }}>
+            <div style={panel}>
+              <h3 style={panelTitle}>School average</h3>
+              <div style={{ fontSize: '2rem' }}><Avg value={data.average} /></div>
+              <p style={{ ...muted, marginTop: '0.25rem' }}>{data.gradedCount} graded submission{data.gradedCount === 1 ? '' : 's'}</p>
             </div>
-          )}
-        </div>
-      </nav>
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-        <h1 style={{ color: s.turquoise, fontSize: '2rem', textAlign: 'center', marginBottom: '2rem' }}>School Statistics</h1>
-        {loading ? (
-          <div style={{ textAlign: 'center', color: s.turquoise, padding: '3rem' }}>Loading statistics...</div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
-            {statCards.map(card => (
-              <div key={card.label} style={{ background: 'rgba(255,255,255,0.1)', padding: '2rem', borderRadius: '15px', borderLeft: `4px solid ${s.turquoise}`, textAlign: 'center' }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>{card.icon}</div>
-                <div style={{ fontSize: '2.5rem', color: s.turquoise, fontWeight: 'bold', marginBottom: '0.5rem' }}>{card.value}</div>
-                <div style={{ color: '#ccc', fontSize: '1rem' }}>{card.label}</div>
-              </div>
-            ))}
+            <div style={panel}>
+              <h3 style={panelTitle}>People</h3>
+              <div style={muted}>{data.counts.students} students · {data.counts.teachers} teachers · {data.counts.parents} parents · {data.counts.classes} classes</div>
+            </div>
+            <div style={panel}>
+              <h3 style={panelTitle}>At-risk threshold</h3>
+              <input type="number" min="1" max="100" value={input} onChange={e => setInput(e.target.value)}
+                style={{ ...glassInput, width: '110px' }} aria-label="At-risk threshold percent" />
+              <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.4rem' }}>Students averaging below this % are flagged.</p>
+            </div>
           </div>
-        )}
-      </div>
-    </div>
+
+          <div style={panel}>
+            <h3 style={panelTitle}>Performance by class</h3>
+            {data.classes.length === 0 ? <p style={muted}>No classes at your school yet.</p> : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th}>Class</th><th style={th}>Students</th><th style={th}>Assignments</th><th style={th}>Graded</th><th style={th}>Average</th><th style={th}>At risk</th></tr></thead>
+                  <tbody>
+                    {data.classes.map(c => (
+                      <tr key={c.id}>
+                        <td style={td}><strong>{c.name}</strong></td>
+                        <td style={td}>{c.students}</td>
+                        <td style={td}>{c.assignments}</td>
+                        <td style={td}>{c.graded}</td>
+                        <td style={td}><Avg value={c.average} /></td>
+                        <td style={{ ...td, color: c.atRisk ? '#ff8f8f' : undefined }}>{c.atRisk}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div style={panel}>
+            <h3 style={panelTitle}>Average by grade</h3>
+            {data.grades.length === 0 ? <p style={muted}>No data yet.</p> : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th}>Grade</th><th style={th}>Students</th><th style={th}>Graded</th><th style={th}>Average</th></tr></thead>
+                  <tbody>
+                    {data.grades.map(g => (
+                      <tr key={g.grade}>
+                        <td style={td}><strong>Grade {g.grade}</strong></td>
+                        <td style={td}>{g.students}</td>
+                        <td style={td}>{g.graded}</td>
+                        <td style={td}><Avg value={g.average} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.75rem' }}>
+              A per-subject breakdown needs assignments to be tagged with a subject, which isn't tracked yet.
+            </p>
+          </div>
+
+          <div style={panel}>
+            <h3 style={panelTitle}>Students at risk ({data.atRiskTotal})</h3>
+            {data.atRisk.length === 0 ? <p style={muted}>No students are averaging below {data.threshold}%.</p> : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th}>Student</th><th style={th}>Class</th><th style={th}>Average</th><th style={th}>Graded</th></tr></thead>
+                  <tbody>
+                    {data.atRisk.map(s => (
+                      <tr key={s.studentId}>
+                        <td style={td}><strong>{s.name}</strong></td>
+                        <td style={td}>{s.className}</td>
+                        <td style={td}><Avg value={s.average} /></td>
+                        <td style={td}>{s.gradedCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {data.atRiskTotal > data.atRisk.length && (
+              <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.75rem' }}>Showing the {data.atRisk.length} lowest averages.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </StudentPage>
   )
 }
