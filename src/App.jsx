@@ -30,6 +30,8 @@ import PrincipalStats from './pages/principal/PrincipalStats'
 import PrincipalStaff from './pages/principal/PrincipalStaff'
 
 import TutorDashboard from './pages/tutor/TutorDashboard'
+import TutorStudents from './pages/tutor/TutorStudents'
+import TutorSessions from './pages/tutor/TutorSessions'
 import SchoolMemberDashboard from './pages/schoolmember/SchoolMemberDashboard'
 
 import AdminDashboard from './pages/admin/AdminDashboard'
@@ -87,6 +89,8 @@ export default function App() {
 
           {/* Tutor */}
           <Route path="/tutor/dashboard" element={guard('tutor', <TutorDashboard />)} />
+          <Route path="/tutor/students" element={guard('tutor', <TutorStudents />)} />
+          <Route path="/tutor/sessions" element={guard('tutor', <TutorSessions />)} />
 
           {/* School Member */}
           <Route path="/schoolmember/dashboard" element={guard('schoolmember', <SchoolMemberDashboard />)} />
