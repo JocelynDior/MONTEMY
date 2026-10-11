@@ -1,116 +1,218 @@
-import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import { AdminProvider } from "./context/AdminContext";
+import { MaintenanceProvider, useMaintenance } from "./context/MaintenanceContext";
+import MaintenanceScreen from "./components/MaintenanceScreen";
+import ManagerViewBadge from "./components/ManagerViewBadge";
+import { MusicProvider } from "./context/MusicContext";
+import { AIAgentPanelProvider } from "./context/AIAgentPanelContext";
+import { ToastProvider } from "./context/ToastContext";
+import ErrorBoundary from "./components/ErrorBoundary";
+import BackgroundMusic from "./components/BackgroundMusic";
+import SoundEffects from "./components/SoundEffects";
+import BottomNavBar from "./components/BottomNavBar";
+import AutoRefresher from "./components/AutoRefresher";
+import { processSquadFinesForAllClubs } from "./utils/squadFines";
+import FeedPage from "./pages/FeedPage";
+import PremierLeaguePage from "./pages/PremierLeaguePage";
+import LaLigaPage from "./pages/LaLigaPage";
+import SerieAPage from "./pages/SerieAPage";
+import BundesligaPage from "./pages/BundesligaPage";
+import Ligue1Page from "./pages/Ligue1Page";
+import ChampionsLeaguePage from "./pages/ChampionsLeaguePage";
+import EuropaLeaguePage from "./pages/EuropaLeaguePage";
+import ConferenceLeaguePage from "./pages/ConferenceLeaguePage";
+import ClubWorldCupPage from "./pages/ClubWorldCupPage";
+import SuperCupPage from "./pages/SuperCupPage";
+import CommunityShieldPage from "./pages/CommunityShieldPage";
+import SupercopaPage from "./pages/SupercopaPage";
+import SupercoppaItalianaPage from "./pages/SupercoppaItalianaPage";
+import DFLSupercupPage from "./pages/DFLSupercupPage";
+import TropheeDesChampionsPage from "./pages/TropheeDesChampionsPage";
+import FACupPage from "./pages/FACupPage";
+import CopaDelReyPage from "./pages/CopaDelReyPage";
+import CoppaItaliaPage from "./pages/CoppaItaliaPage";
+import DFBPokalPage from "./pages/DFBPokalPage";
+import CoupeeDeFrancePage from "./pages/CoupesDeFrancePage";
+import CreateAccountPage from "./pages/CreateAccountPage";
+import TransferMarketPage from "./pages/TransferMarketPage";
+import TeamManagementPage from "./pages/TeamManagementPage";
+import CalendarPage from "./pages/CalendarPage";
+import ManagerRankingsPage from "./pages/ManagerRankingsPage";
+import TermsOfServicePage from "./pages/TermsOfServicePage";
+import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
+import AdminCalendarPage from "./pages/AdminCalendarPage";
+import ManagerProfilePage from "./pages/ManagerProfilePage";
+import AdminProfilePage from "./pages/AdminProfilePage";
+import RivalsSquadPage from "./pages/RivalsSquadPage";
+import SquadPage from "./pages/SquadPage";
+import SettingsPage from "./pages/SettingsPage";
+import RulesAndTutorialsPage from "./pages/RulesAndTutorialsPage";
+import EAwardsPage from "./pages/EAwardsPage";
 
-import { AuthProvider } from './context/AuthContext'
-import { BrandingProvider } from './context/BrandingContext'
-import { ProtectedRoute, RoleRoute, PublicOnlyRoute } from './components/routing/RouteGuards'
+// Newly created files
+import { groq } from "./utils/groq";
+import AddPlayerModal from "./modals/AddPlayerModal";
+import RequestBuyModal from "./modals/RequestBuyModal";
+import RequestLoanModal from "./modals/RequestLoanModal";
+import AuctionBidModal from "./modals/AuctionBidModal";
+import PlayerPopupModal from "./modals/PlayerPopupModal";
+import AIAgentPage from "./pages/AIAgentPage";
 
-import Landing from './pages/auth/Landing'
-import Login from './pages/auth/Login'
-import AccountTypeSelect from './pages/auth/AccountTypeSelect'
-import Register from './pages/auth/Register'
-import PendingVerification from './pages/auth/PendingVerification'
+const INACTIVITY_LIMIT = 10 * 60 * 1000; // 10 minutes
+const INACTIVE_FLAG_KEY = "careerInactiveAt";
 
-import StudentDashboard from './pages/student/StudentDashboard'
-import StudentAcademics from './pages/student/StudentAcademics'
-import StudentResources from './pages/student/StudentResources'
-import StudentAiTutor from './pages/student/StudentAiTutor'
+// ── Image preloader: warms browser cache from localStorage on app start ──────
+function preloadCachedImages() {
+  try {
+    const icons = JSON.parse(localStorage.getItem("careerLeagueImages") || "{}");
+    Object.values(icons).forEach(url => { if (url) { const img = new Image(); img.src = url; } });
+  } catch {}
+  try {
+    const headlines = JSON.parse(localStorage.getItem("careerHeadlineImages") || "[]");
+    headlines.forEach(url => { if (url) { const img = new Image(); img.src = url; } });
+  } catch {}
+}
 
-import TeacherDashboard from './pages/teacher/TeacherDashboard'
-import TeacherClasses from './pages/teacher/TeacherClasses'
-import TeacherAssignments from './pages/teacher/TeacherAssignments'
-import TeacherProgress from './pages/teacher/TeacherProgress'
+preloadCachedImages();
 
-import ParentDashboard from './pages/parent/ParentDashboard'
-import ParentMyChild from './pages/parent/ParentMyChild'
+function InactivityWatcher() {
+  const navigate = useNavigate();
 
-import PrincipalDashboard from './pages/principal/PrincipalDashboard'
-import PrincipalEvents from './pages/principal/PrincipalEvents'
-import PrincipalStats from './pages/principal/PrincipalStats'
-import PrincipalStaff from './pages/principal/PrincipalStaff'
+  useEffect(() => {
+    const inactiveAt = localStorage.getItem(INACTIVE_FLAG_KEY);
+    if (inactiveAt) {
+      localStorage.removeItem(INACTIVE_FLAG_KEY);
+      navigate("/");
+    }
+  }, [navigate]);
 
-import TutorDashboard from './pages/tutor/TutorDashboard'
-import TutorStudents from './pages/tutor/TutorStudents'
-import TutorSessions from './pages/tutor/TutorSessions'
-import SchoolMemberDashboard from './pages/schoolmember/SchoolMemberDashboard'
+  useEffect(() => {
+    let timer;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        localStorage.setItem(INACTIVE_FLAG_KEY, Date.now().toString());
+      }, INACTIVITY_LIMIT);
+    };
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click"];
+    events.forEach(e => window.addEventListener(e, reset));
+    reset();
+    return () => {
+      clearTimeout(timer);
+      events.forEach(e => window.removeEventListener(e, reset));
+    };
+  }, []);
 
-import AdminDashboard from './pages/admin/AdminDashboard'
-import AdminUsers from './pages/admin/AdminUsers'
-import AdminClasses from './pages/admin/AdminClasses'
-import Messages from './pages/shared/Messages'
-import AdminOrgs from './pages/admin/AdminOrgs'
+  return null;
+}
 
-// Signed in AND the right role
-const guard = (role, element) => (
-  <ProtectedRoute>
-    <RoleRoute role={role}>{element}</RoleRoute>
-  </ProtectedRoute>
-)
+function SquadFineSweeper() {
+  useEffect(() => {
+    processSquadFinesForAllClubs();
+  }, []);
+  return null;
+}
+
+function AppInner() {
+  const { lockActive, ready } = useMaintenance();
+  const location = useLocation();
+
+  // Wait for the maintenance flag before showing anything (prevents the full site flashing)
+  if (!ready) {
+    return <div style={{ minHeight: "100vh", background: "#000020" }} />;
+  }
+
+  // ── Maintenance lock: visitors only get the maintenance screen or the manager calendar ──
+  // No Routes, no BottomNavBar, no Navbar/SideMenu, so there is no way to navigate elsewhere.
+  if (lockActive) {
+    return (
+      <>
+        <InactivityWatcher />
+        <AutoRefresher />
+        {location.pathname === "/calendar" ? <CalendarPage /> : <MaintenanceScreen />}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <BackgroundMusic />
+      <SoundEffects />
+      <InactivityWatcher />
+      <AutoRefresher />
+      <SquadFineSweeper />
+      <ManagerViewBadge />
+      <Routes>
+        <Route path="/" element={<FeedPage />} />
+
+        {/* ── Domestic Leagues ── */}
+        <Route path="/premier-league" element={<PremierLeaguePage />} />
+        <Route path="/la-liga"        element={<LaLigaPage />} />
+        <Route path="/serie-a"        element={<SerieAPage />} />
+        <Route path="/bundesliga"     element={<BundesligaPage />} />
+        <Route path="/ligue-1"        element={<Ligue1Page />} />
+
+        {/* ── Domestic Cups ── */}
+        <Route path="/fa-cup"         element={<FACupPage />} />
+        <Route path="/copa-del-rey"   element={<CopaDelReyPage />} />
+        <Route path="/coppa-italia"   element={<CoppaItaliaPage />} />
+        <Route path="/dfb-pokal"      element={<DFBPokalPage />} />
+        <Route path="/coupe-de-france" element={<CoupeeDeFrancePage />} />
+
+        {/* ── Domestic Super Cups ── */}
+        <Route path="/community-shield"      element={<CommunityShieldPage />} />
+        <Route path="/supercopa-de-espana"   element={<SupercopaPage />} />
+        <Route path="/supercoppa-italiana"   element={<SupercoppaItalianaPage />} />
+        <Route path="/dfl-supercup"          element={<DFLSupercupPage />} />
+        <Route path="/trophee-des-champions" element={<TropheeDesChampionsPage />} />
+
+        {/* ── European / Global ── */}
+        <Route path="/champions-league" element={<ChampionsLeaguePage />} />
+        <Route path="/europa-league"    element={<EuropaLeaguePage />} />
+        <Route path="/conference-league" element={<ConferenceLeaguePage />} />
+        <Route path="/club-world-cup"   element={<ClubWorldCupPage />} />
+        <Route path="/super-cup"        element={<SuperCupPage />} />
+
+        {/* ── Other Pages ── */}
+        <Route path="/create-account"    element={<CreateAccountPage />} />
+        <Route path="/transfer-market"   element={<TransferMarketPage />} />
+        <Route path="/team-management"   element={<TeamManagementPage />} />
+        <Route path="/calendar"          element={<CalendarPage />} />
+        <Route path="/manager-rankings"  element={<ManagerRankingsPage />} />
+        <Route path="/terms"             element={<TermsOfServicePage />} />
+        <Route path="/privacy"           element={<PrivacyPolicyPage />} />
+        <Route path="/admin-calendar"    element={<AdminCalendarPage />} />
+        <Route path="/manager-profile"   element={<ManagerProfilePage />} />
+        <Route path="/admin-profile"     element={<AdminProfilePage />} />
+        <Route path="/rivals-squads"     element={<RivalsSquadPage />} />
+        <Route path="/squad"             element={<SquadPage />} />
+        <Route path="/settings"          element={<SettingsPage />} />
+        <Route path="/rules-tutorials"   element={<RulesAndTutorialsPage />} />
+        <Route path="/eawards"           element={<EAwardsPage />} />
+        <Route path="/admin/ai-agent"    element={<AIAgentPage />} />
+      </Routes>
+      <BottomNavBar />
+    </>
+  );
+}
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <BrandingProvider>
-        <Routes>
-          {/* Public (signed-in users are redirected to their dashboard) */}
-          <Route path="/" element={<PublicOnlyRoute><Landing /></PublicOnlyRoute>} />
-          <Route path="/login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
-          <Route path="/admin-login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
-
-          {/* Registration stays open: it signs the user in itself and then navigates */}
-          <Route path="/create-account" element={<AccountTypeSelect />} />
-          <Route path="/register/:type" element={<Register />} />
-          <Route path="/signup" element={<AccountTypeSelect />} />
-
-          {/* Messaging: one shared page for every role */}
-          <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
-
-          {/* Any signed-in user */}
-          <Route path="/pending-verification" element={<ProtectedRoute><PendingVerification /></ProtectedRoute>} />
-
-          {/* Student */}
-          <Route path="/student/dashboard" element={guard('student', <StudentDashboard />)} />
-          <Route path="/student/academics" element={guard('student', <StudentAcademics />)} />
-          <Route path="/student/resources" element={guard('student', <StudentResources />)} />
-          <Route path="/student/ai-tutor" element={guard('student', <StudentAiTutor />)} />
-
-          {/* Teacher */}
-          <Route path="/teacher/dashboard" element={guard('teacher', <TeacherDashboard />)} />
-          <Route path="/teacher/classes" element={guard('teacher', <TeacherClasses />)} />
-          <Route path="/teacher/assignments" element={guard('teacher', <TeacherAssignments />)} />
-          <Route path="/teacher/progress" element={guard('teacher', <TeacherProgress />)} />
-
-          {/* Parent */}
-          <Route path="/parent/dashboard" element={guard('parent', <ParentDashboard />)} />
-          <Route path="/parent/mychild" element={guard('parent', <ParentMyChild />)} />
-
-          {/* Principal */}
-          <Route path="/principal/dashboard" element={guard('principal', <PrincipalDashboard />)} />
-          <Route path="/principal/events" element={guard('principal', <PrincipalEvents />)} />
-          <Route path="/principal/stats" element={guard('principal', <PrincipalStats />)} />
-          <Route path="/principal/staff" element={guard('principal', <PrincipalStaff />)} />
-
-          {/* Tutor */}
-          <Route path="/tutor/dashboard" element={guard('tutor', <TutorDashboard />)} />
-          <Route path="/tutor/students" element={guard('tutor', <TutorStudents />)} />
-          <Route path="/tutor/sessions" element={guard('tutor', <TutorSessions />)} />
-
-          {/* School Member */}
-          <Route path="/schoolmember/dashboard" element={guard('schoolmember', <SchoolMemberDashboard />)} />
-
-          {/* Admin */}
-          <Route path="/admin/dashboard" element={guard('admin', <AdminDashboard />)} />
-          <Route path="/admin/users" element={guard('admin', <AdminUsers />)} />
-          <Route path="/admin/classes" element={guard('admin', <AdminClasses />)} />
-          <Route path="/admin/chat" element={<Navigate to="/messages" replace />} />
-          <Route path="/admin/organisations" element={guard('admin', <AdminOrgs />)} />
-
-          {/* Anything else */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-        </BrandingProvider>
-      </AuthProvider>
-    </BrowserRouter>
-  )
+    <ErrorBoundary>
+      <ToastProvider>
+        <AdminProvider>
+          <MaintenanceProvider>
+            <AIAgentPanelProvider>
+              <MusicProvider>
+                <BrowserRouter>
+                  <AppInner />
+                </BrowserRouter>
+              </MusicProvider>
+            </AIAgentPanelProvider>
+          </MaintenanceProvider>
+        </AdminProvider>
+      </ToastProvider>
+    </ErrorBoundary>
+  );
 }
