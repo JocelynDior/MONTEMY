@@ -66,10 +66,13 @@ function HomeworkTab({ data }) {
         <div key={h.id} style={{ ...panel, marginBottom: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700 }}>{h.title}</span>
-            <Chip color={statusColor(h.status)}>{h.status}</Chip>
+            <span style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+              {h.isLate && h.status === 'Graded' && <Chip color="#ffb36b">Handed in late</Chip>}
+              <Chip color={statusColor(h.status)}>{h.status}</Chip>
+            </span>
           </div>
           <div style={{ ...muted, fontSize: '0.8rem', marginTop: '0.3rem' }}>
-            {h.status === 'Not submitted' || h.status === 'Overdue' ? `${dueIn(h.dueDate) || ''}${h.dueDate ? ' · ' : ''}` : ''}
+            {h.status === 'Not submitted' || h.status === 'Overdue' || h.status === 'Reopened' ? `${dueIn(h.dueDate) || ''}${h.dueDate ? ' · ' : ''}` : ''}
             {h.dueDate ? `Due ${fmtDate(h.dueDate)}` : 'No due date'}
           </div>
           {h.description && <p style={{ ...muted, marginTop: '0.5rem' }}>{h.description}</p>}
