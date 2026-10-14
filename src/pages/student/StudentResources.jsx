@@ -1,60 +1,80 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import StudentPage from '../../components/student/StudentPage'
-import { apiFetch } from '../../api/apiClient'
-import { glassCard, glassInput, C } from '../../styles/glass'
+import ResourceGrid from '../../components/resources/ResourceGrid'
+import { useApiData } from '../../hooks/useApiData'
+import { glassCard, glassInput, glassBtn, C } from '../../styles/glass'
 
 const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
-const isLink = (u) => typeof u === 'string' && /^https?:\/\//i.test(u)
+const opt = { background: '#001F3F' }
 
 export default function StudentResources() {
-  const [resources, setResources] = useState(null)
-  const [error, setError] = useState('')
+  const { data, loading, error, reload } = useApiData('/api/resources')
+  const [tab, setTab] = useState('all') // 'all' | 'papers'
   const [subject, setSubject] = useState('')
+  const [grade, setGrade] = useState('')
 
-  useEffect(() => {
-    apiFetch('/api/student/resources')
-      .then(r => setResources(r.resources || []))
-      .catch(err => { setError(err.message || 'Could not load resources.'); setResources([]) })
-  }, [])
+  const resources = data?.resources || []
+  const subjects = [...new Set(resources.map(r => r.subject).filter(Boolean))].sort()
+  const grades = [...new Set(resources.map(r => r.grade).filter(Boolean))].sort((a, b) => Number(a) - Number(b))
+  const paperCount = resources.filter(r => r.isPastPaper).length
 
-  const subjects = [...new Set((resources || []).map(r => r.subject).filter(Boolean))].sort()
-  const shown = (resources || []).filter(r => !subject || r.subject === subject)
+  // A resource with no grade is for everyone, so it stays visible when a grade is chosen
+  const shown = resources.filter(r =>
+    (tab === 'all' || r.isPastPaper) &&
+    (!subject || r.subject === subject) &&
+    (!grade || !r.grade || r.grade === grade))
+
+  const tabBtn = (key, label) => (
+    <button key={key} onClick={() => setTab(key)}
+      style={{ border: 'none', cursor: 'pointer', padding: '0.55rem 1.3rem', borderRadius: '8px', fontWeight: 600,
+        background: tab === key ? 'rgba(var(--color-primary-rgb),0.85)' : 'rgba(255,255,255,0.08)',
+        color: tab === key ? C.navy : 'rgba(255,255,255,0.7)' }}>
+      {label}
+    </button>
+  )
 
   return (
     <StudentPage title="Learning Resources" icon="📖">
-      {error && (
-        <div style={{ background: 'rgba(255,80,80,0.15)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.7rem 1rem', marginBottom: '1rem', color: '#ffb3b3' }}>
-          {error}
+      {loading ? <p style={muted}>Loading...</p> : error ? (
+        <div style={{ ...glassCard, padding: '1rem 1.25rem', borderColor: 'rgba(255,80,80,0.4)' }}>
+          <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
+          <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
         </div>
-      )}
-
-      {resources === null ? <p style={muted}>Loading...</p> : resources.length === 0 && !error ? (
+      ) : resources.length === 0 ? (
         <div style={{ ...glassCard, padding: '2rem', textAlign: 'center', ...muted }}>
           Your teachers haven't added any study materials yet. Check back soon.
         </div>
       ) : (
         <>
-          {subjects.length > 1 && (
-            <select value={subject} onChange={e => setSubject(e.target.value)}
-              style={{ ...glassInput, width: 'auto', minWidth: '220px', marginBottom: '1.25rem' }}>
-              <option value="" style={{ background: '#001F3F' }}>All subjects</option>
-              {subjects.map(s => <option key={s} value={s} style={{ background: '#001F3F' }}>{s}</option>)}
-            </select>
-          )}
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
-            {shown.map(r => (
-              <div key={r.id} style={{ ...glassCard, padding: '1.25rem', borderLeft: `4px solid ${C.turquoise}` }}>
-                <div style={{ fontWeight: 600, marginBottom: '0.3rem', overflowWrap: 'anywhere' }}>{r.title}</div>
-                <div style={{ ...muted, fontSize: '0.8rem', marginBottom: '0.75rem' }}>
-                  {[r.subject, r.grade ? `Grade ${r.grade}` : null].filter(Boolean).join(' · ') || 'General'}
-                </div>
-                {isLink(r.file_url)
-                  ? <a href={r.file_url} target="_blank" rel="noopener noreferrer" style={{ color: C.turquoise, fontWeight: 600 }}>Open</a>
-                  : <span style={{ ...muted, fontSize: '0.8rem' }}>File not available yet</span>}
-              </div>
-            ))}
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+            {tabBtn('all', 'All materials')}
+            {tabBtn('papers', `Past papers (${paperCount})`)}
           </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+            {subjects.length > 1 && (
+              <select aria-label="Filter by subject" value={subject} onChange={e => setSubject(e.target.value)}
+                style={{ ...glassInput, width: 'auto', minWidth: '200px' }}>
+                <option value="" style={opt}>All subjects</option>
+                {subjects.map(s => <option key={s} value={s} style={opt}>{s}</option>)}
+              </select>
+            )}
+            {grades.length > 1 && (
+              <select aria-label="Filter by grade" value={grade} onChange={e => setGrade(e.target.value)}
+                style={{ ...glassInput, width: 'auto', minWidth: '160px' }}>
+                <option value="" style={opt}>All grades</option>
+                {grades.map(g => <option key={g} value={g} style={opt}>Grade {g}</option>)}
+              </select>
+            )}
+          </div>
+
+          {shown.length === 0 ? (
+            <div style={{ ...glassCard, padding: '2rem', textAlign: 'center', ...muted }}>
+              {tab === 'papers' && paperCount === 0 ? 'No past papers have been added yet.' : 'Nothing matches those filters.'}
+            </div>
+          ) : (
+            <ResourceGrid resources={shown} />
+          )}
         </>
       )}
     </StudentPage>
