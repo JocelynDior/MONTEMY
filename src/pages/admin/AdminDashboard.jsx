@@ -7,6 +7,8 @@ import LinkRequests from '../../components/admin/LinkRequests'
 import PlatformStats from '../../components/admin/PlatformStats'
 import AdminResources from '../../components/admin/AdminResources'
 import MessagesBell from '../../components/layout/MessagesBell'
+import NotificationBell from '../../components/layout/NotificationBell'
+import AdminBroadcast from '../../components/admin/AdminBroadcast'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -84,6 +86,7 @@ export default function AdminDashboard() {
             </span>
           )}
           {profile?.name && <span style={{ color: 'rgba(255,255,255,0.8)' }}>{profile.name}</span>}
+          <NotificationBell />
           <MessagesBell />
           <button onClick={handleLogout} style={smallBtn}>Logout</button>
         </div>
@@ -92,7 +95,7 @@ export default function AdminDashboard() {
       <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem 1.5rem' }}>
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources']].map(([key, label]) => (
+          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources'], ['broadcast', 'Broadcast']].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               style={{ border: 'none', cursor: 'pointer', padding: '0.6rem 1.4rem', borderRadius: '8px', fontWeight: 600,
                 background: tab === key ? 'rgba(var(--color-primary-rgb),0.85)' : 'rgba(255,255,255,0.08)',
@@ -147,6 +150,8 @@ export default function AdminDashboard() {
           <LinkRequests onChanged={load} />
         ) : tab === 'resources' ? (
           <AdminResources />
+        ) : tab === 'broadcast' ? (
+          <AdminBroadcast />
         ) : (
           <>
             <h2 style={{ color: C.turquoise, marginBottom: '1.25rem' }}>Pending Verification ({pendingCount})</h2>
