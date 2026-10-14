@@ -622,23 +622,6 @@ app.put('/api/student/profile', verifyToken, studentLimiter, async (req, res) =>
   }
 })
 
-// Study materials uploaded for the student's school (uploads arrive in Phase 17)
-app.get('/api/student/resources', verifyToken, studentLimiter, async (req, res) => {
-  try {
-    const ctx = await loadStudent(req.user)
-    if (!ctx) return res.status(403).json({ error: 'Students only' })
-    if (!ctx.user.org_id) return res.json({ resources: [] })
-
-    const { data, error } = await supabase
-      .from('resources').select('id, title, file_url, subject, grade').eq('org_id', ctx.user.org_id).order('title')
-    if (error) throw error
-    res.json({ resources: data || [] })
-  } catch (err) {
-    console.error('Student resources error:', err)
-    res.status(500).json({ error: 'Could not load resources.' })
-  }
-})
-
 // ---------- Teacher routes (Phase 10) ----------
 // A teacher's classes are the grade+letter pairs they added (rows in teacher_classes).
 // Every route below checks that the class/assignment belongs to the signed-in teacher.
@@ -3035,6 +3018,297 @@ app.post('/api/messages', verifyToken, sendMessageLimiter, async (req, res) => {
   } catch (err) {
     console.error('Send message failed:', err)
     res.status(500).json({ error: 'Could not send your message.' })
+  }
+})
+
+// ---------- Resources: study materials (Phase 17) ----------
+// Files live in a PRIVATE Storage bucket. Nobody gets a permanent public link: the browser uploads
+// straight to Storage with a one-time signed upload token, and downloads/previews use short-lived
+// signed links that this API only hands to people in the same organisation.
+// Storage itself also enforces the 10MB limit and the allowed file types (set on the bucket in SQL).
+const RESOURCE_BUCKET = 'resources'
+const RESOURCE_MAX_BYTES = 10 * 1024 * 1024
+const RESOURCE_LINK_SECONDS = 60 * 60
+const RESOURCE_TYPES = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+}
+const RESOURCE_COLUMNS = 'id, org_id, title, subject, grade, is_past_paper, file_name, file_size, mime_type, storage_path, uploaded_by, created_at'
+
+const resourcesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+async function loadResourceUser(authUser) {
+  const { data } = await supabase
+    .from('users').select('id, name, role, org_id, is_verified').eq('id', authUser.id).maybeSingle()
+  return data || null
+}
+
+// Works out which organisation an upload belongs to. Teachers always upload to their own school;
+// admins choose the organisation. Sends the error response itself and returns null when not allowed.
+async function resolveUploadOrg(user, requestedOrgId, res) {
+  if (user?.role === 'teacher') {
+    if (!user.is_verified) {
+      res.status(403).json({ error: 'Your account needs to be verified by an admin before you can upload.' })
+      return null
+    }
+    if (!user.org_id) {
+      res.status(400).json({ error: 'Your account is not linked to a school yet.' })
+      return null
+    }
+    return user.org_id
+  }
+  if (user?.role === 'admin') {
+    if (!UUID_RE.test(String(requestedOrgId))) {
+      res.status(400).json({ error: 'Choose which organisation these materials are for.' })
+      return null
+    }
+    const { data: org } = await supabase.from('organizations').select('id').eq('id', requestedOrgId).maybeSingle()
+    if (!org) {
+      res.status(404).json({ error: 'That organisation was not found.' })
+      return null
+    }
+    return org.id
+  }
+  res.status(403).json({ error: 'Only teachers and admins can upload study materials.' })
+  return null
+}
+
+function cleanResourceFileName(name) {
+  const base = String(name || '').split(/[\\/]/).pop()
+    .replace(/[^\w.\- ()]+/g, '_').replace(/\s+/g, ' ').trim()
+  if (!base) return 'file'
+  return base.length > 120 ? base.slice(-120) : base
+}
+
+// Step 1 of an upload: check the file details and hand back a one-time upload token
+app.post('/api/resources/upload-url', verifyToken, resourcesLimiter, async (req, res) => {
+  try {
+    const user = await loadResourceUser(req.user)
+    const orgId = await resolveUploadOrg(user, req.body?.orgId, res)
+    if (!orgId) return
+
+    const mimeType = String(req.body?.mimeType || '')
+    const size = Number(req.body?.size)
+    const ext = RESOURCE_TYPES[mimeType]
+    if (!ext) {
+      return res.status(400).json({ error: 'That file type is not allowed. Use a PDF, Word, PowerPoint or image (PNG, JPG, WebP) file.' })
+    }
+    if (!Number.isFinite(size) || size <= 0) return res.status(400).json({ error: 'That file is empty.' })
+    if (size > RESOURCE_MAX_BYTES) return res.status(400).json({ error: 'That file is too big. The limit is 10MB.' })
+
+    const path = `${orgId}/${user.id}/${crypto.randomUUID()}.${ext}`
+    const { data, error } = await supabase.storage.from(RESOURCE_BUCKET).createSignedUploadUrl(path)
+    if (error) throw error
+    res.json({ path, token: data.token })
+  } catch (err) {
+    console.error('Resource upload-url error:', err)
+    res.status(500).json({ error: 'Could not start the upload. Please try again.' })
+  }
+})
+
+// Step 2 of an upload: confirm the file really arrived in Storage, then save its details
+app.post('/api/resources', verifyToken, resourcesLimiter, async (req, res) => {
+  let removeOnFail = null
+  try {
+    const user = await loadResourceUser(req.user)
+    const orgId = await resolveUploadOrg(user, req.body?.orgId, res)
+    if (!orgId) return
+
+    // The path must be one this API issued for this user and organisation
+    const prefix = `${orgId}/${user.id}/`
+    const path = String(req.body?.path || '')
+    const fileKey = path.slice(prefix.length)
+    if (!path.startsWith(prefix) || !/^[0-9a-f-]{36}\.[a-z]{2,4}$/i.test(fileKey)) {
+      return res.status(400).json({ error: 'That upload is not valid. Please try again.' })
+    }
+
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : ''
+    if (!title) return res.status(400).json({ error: 'Please give the resource a title.' })
+    if (title.length > 150) return res.status(400).json({ error: 'The title is too long (max 150 characters).' })
+    const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim().replace(/\s+/g, ' ').slice(0, 60) : ''
+    if (!subject) return res.status(400).json({ error: 'Please choose a subject.' })
+    const grade = cleanGrade(req.body?.grade)
+    const isPastPaper = req.body?.isPastPaper === true
+
+    removeOnFail = path
+    const { data: found, error: listErr } = await supabase.storage
+      .from(RESOURCE_BUCKET).list(`${orgId}/${user.id}`, { search: fileKey, limit: 10 })
+    if (listErr) throw listErr
+    const obj = (found || []).find(f => f.name === fileKey)
+    if (!obj) {
+      removeOnFail = null
+      return res.status(400).json({ error: 'We could not find the uploaded file. Please try uploading it again.' })
+    }
+    const size = Number(obj.metadata?.size) || 0
+    const mimeType = obj.metadata?.mimetype || ''
+    if (!RESOURCE_TYPES[mimeType] || size <= 0 || size > RESOURCE_MAX_BYTES) {
+      await supabase.storage.from(RESOURCE_BUCKET).remove([path])
+      removeOnFail = null
+      return res.status(400).json({ error: 'That file is not allowed. Use a PDF, Word, PowerPoint or image file up to 10MB.' })
+    }
+
+    const { data: existing } = await supabase.from('resources').select('id').eq('storage_path', path).maybeSingle()
+    if (existing) {
+      removeOnFail = null
+      return res.status(409).json({ error: 'That file has already been saved.' })
+    }
+
+    // file_url holds the storage path too: real links are created on demand and expire
+    const { data: row, error } = await supabase.from('resources').insert({
+      org_id: orgId,
+      title,
+      subject,
+      grade,
+      is_past_paper: isPastPaper,
+      file_name: cleanResourceFileName(req.body?.fileName),
+      file_size: size,
+      mime_type: mimeType,
+      storage_path: path,
+      file_url: path,
+      uploaded_by: user.id,
+    }).select(RESOURCE_COLUMNS).single()
+    if (error) throw error
+
+    removeOnFail = null
+    res.json({ id: row.id })
+  } catch (err) {
+    console.error('Resource save error:', err)
+    if (removeOnFail) {
+      await supabase.storage.from(RESOURCE_BUCKET).remove([removeOnFail]).catch(() => {})
+    }
+    res.status(500).json({ error: 'Could not save the resource. Please try again.' })
+  }
+})
+
+// List. Students and teachers see their own organisation's materials; admins see everything
+// (optionally for one organisation with ?orgId=). Teachers can add ?mine=1 for just their uploads.
+app.get('/api/resources', verifyToken, resourcesLimiter, async (req, res) => {
+  try {
+    const user = await loadResourceUser(req.user)
+    if (!user || !['student', 'teacher', 'admin'].includes(user.role)) {
+      return res.status(403).json({ error: 'You do not have access to study materials.' })
+    }
+
+    let query = supabase.from('resources').select(RESOURCE_COLUMNS)
+      .not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(500)
+
+    if (user.role === 'admin') {
+      if (req.query.orgId) {
+        if (!UUID_RE.test(String(req.query.orgId))) return res.status(400).json({ error: 'That organisation is not valid.' })
+        query = query.eq('org_id', req.query.orgId)
+      }
+    } else {
+      if (!user.org_id) return res.json({ resources: [] })
+      query = query.eq('org_id', user.org_id)
+      if (user.role === 'teacher' && req.query.mine === '1') query = query.eq('uploaded_by', user.id)
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+    const rows = data || []
+
+    const people = {}
+    const orgs = {}
+    const uploaderIds = [...new Set(rows.map(r => r.uploaded_by).filter(Boolean))]
+    if (uploaderIds.length) {
+      for (const u of await fetchIn('users', 'id, name', 'id', uploaderIds)) people[u.id] = u.name
+    }
+    if (user.role === 'admin') {
+      const orgIds = [...new Set(rows.map(r => r.org_id).filter(Boolean))]
+      if (orgIds.length) {
+        for (const o of await fetchIn('organizations', 'id, name', 'id', orgIds)) orgs[o.id] = o.name
+      }
+    }
+
+    res.json({
+      resources: rows.map(r => ({
+        id: r.id,
+        title: r.title,
+        subject: r.subject || null,
+        grade: r.grade || null,
+        isPastPaper: r.is_past_paper === true,
+        fileName: r.file_name || null,
+        fileSize: r.file_size || null,
+        mimeType: r.mime_type || null,
+        createdAt: r.created_at,
+        uploaderName: people[r.uploaded_by] || null,
+        orgName: user.role === 'admin' ? (orgs[r.org_id] || null) : undefined,
+        canDelete: user.role === 'admin' || (user.role === 'teacher' && r.uploaded_by === user.id),
+      })),
+    })
+  } catch (err) {
+    console.error('Resources list error:', err)
+    res.status(500).json({ error: 'Could not load resources.' })
+  }
+})
+
+// A fresh one-hour link for one file (add ?download=1 to make the browser save it)
+app.get('/api/resources/:id/link', verifyToken, resourcesLimiter, async (req, res) => {
+  try {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Resource not found.' })
+    const user = await loadResourceUser(req.user)
+    if (!user || !['student', 'teacher', 'admin'].includes(user.role)) {
+      return res.status(403).json({ error: 'You do not have access to study materials.' })
+    }
+
+    const { data: row } = await supabase.from('resources').select(RESOURCE_COLUMNS).eq('id', req.params.id).maybeSingle()
+    // Same message whether it is missing or belongs to another school, so ids can't be probed
+    if (!row || !row.storage_path || (user.role !== 'admin' && row.org_id !== user.org_id)) {
+      return res.status(404).json({ error: 'Resource not found.' })
+    }
+    if (user.role !== 'admin' && !user.is_verified) {
+      return res.status(403).json({ error: 'Your account needs to be verified by an admin before you can open files.' })
+    }
+
+    const download = req.query.download === '1'
+    const { data, error } = await supabase.storage.from(RESOURCE_BUCKET).createSignedUrl(
+      row.storage_path, RESOURCE_LINK_SECONDS, download ? { download: row.file_name || true } : undefined)
+    if (error || !data?.signedUrl) throw error || new Error('No signed URL')
+    res.json({ url: data.signedUrl, fileName: row.file_name || row.title, mimeType: row.mime_type || null })
+  } catch (err) {
+    console.error('Resource link error:', err)
+    res.status(500).json({ error: 'Could not open that file. Please try again.' })
+  }
+})
+
+// Teachers delete their own uploads; admins delete any
+app.delete('/api/resources/:id', verifyToken, resourcesLimiter, async (req, res) => {
+  try {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Resource not found.' })
+    const user = await loadResourceUser(req.user)
+    if (!user || !['teacher', 'admin'].includes(user.role)) {
+      return res.status(403).json({ error: 'Only teachers and admins can delete study materials.' })
+    }
+
+    const { data: row } = await supabase.from('resources').select('id, org_id, uploaded_by, storage_path').eq('id', req.params.id).maybeSingle()
+    if (!row) return res.status(404).json({ error: 'Resource not found.' })
+    if (user.role === 'teacher') {
+      if (row.uploaded_by !== user.id) return res.status(403).json({ error: 'You can only delete materials you uploaded.' })
+      if (!user.is_verified) return res.status(403).json({ error: 'Your account needs to be verified by an admin before you can do this.' })
+    }
+
+    // Row first, file second: a leftover file is harmless, a row pointing at a missing file is not
+    const { error } = await supabase.from('resources').delete().eq('id', row.id)
+    if (error) throw error
+    if (row.storage_path) {
+      const { error: rmErr } = await supabase.storage.from(RESOURCE_BUCKET).remove([row.storage_path])
+      if (rmErr) console.error('Resource file cleanup failed:', row.storage_path, rmErr)
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Resource delete error:', err)
+    res.status(500).json({ error: 'Could not delete that resource. Please try again.' })
   }
 })
 
