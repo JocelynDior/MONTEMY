@@ -22,6 +22,7 @@ const STATUS_COLORS = {
   Graded: '#7CFC9A',
   Submitted: '#8fd3ff',
   Late: '#ffb36b',
+  Reopened: '#d6b3ff',
   Overdue: '#ff8f8f',
   'Not submitted': '#ffe08a',
 }
