@@ -503,7 +503,7 @@ async function buildStudentOverview(user, student) {
 
   // submissions.student_id references users.id
   const { data: subRows } = await supabase
-    .from('submissions').select('id, assignment_id, grade, feedback, status, submitted_at')
+    .from('submissions').select('id, assignment_id, grade, feedback, status, is_late, submitted_at')
     .eq('student_id', user.id)
 
   // Keep only the latest submission per assignment
@@ -539,6 +539,7 @@ async function buildStudentOverview(user, student) {
       status,
       grade: hasGrade(sub) ? Number(sub.grade) : null,
       feedback: sub?.feedback || null,
+      isLate: !!sub?.is_late,
     }
   })
 
@@ -689,7 +690,7 @@ async function studentsByClass(classIds) {
 // The assignment plus its class, only if this teacher created it and still teaches that class
 async function getOwnedAssignment(userId, assignmentId) {
   const { data: assignment } = await supabase
-    .from('assignments').select('id, class_id, title, description, due_date, created_by').eq('id', assignmentId).maybeSingle()
+    .from('assignments').select('id, class_id, title, description, due_date, created_by, attachments').eq('id', assignmentId).maybeSingle()
   if (!assignment || assignment.created_by !== userId) return null
   if (!(await teacherTeaches(userId, assignment.class_id))) return null
   const { data: cls } = await supabase.from('classes').select('id, name, grade').eq('id', assignment.class_id).maybeSingle()
@@ -729,6 +730,286 @@ function cleanAssignmentInput(body) {
   }
   return { title, description, dueDate }
 }
+
+// ---------- Assignment files & submissions (Phase 20) ----------
+// Files live in a PRIVATE bucket (assignment-files), the same pattern as study resources: the browser uploads
+// straight to Storage with a one-time token from this API, and downloads use short-lived signed links that
+// are only handed to people allowed to see that assignment. Storage enforces the 10MB limit and file types.
+//   teacher attachments:  <orgId>/attachments/<teacherId>/<uuid>.<ext>
+//   student submissions:  <orgId>/submissions/<studentId>/<uuid>.<ext>
+const ASSIGN_BUCKET = 'assignment-files'
+const ASSIGN_MAX_BYTES = 10 * 1024 * 1024
+const ASSIGN_LINK_SECONDS = 60 * 60
+const MAX_ASSIGNMENT_ATTACHMENTS = 3
+const MAX_SUBMISSION_TEXT = 10000
+
+const assignmentFilesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+// assignments.attachments is a jsonb list; make sure what we read is always a clean list
+function normAttachments(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(a => a && typeof a.path === 'string' && typeof a.name === 'string')
+    .map(a => ({ path: a.path, name: a.name, size: Number(a.size) || 0, mime: String(a.mime || '') }))
+}
+
+async function removeAssignmentFiles(paths) {
+  const list = (paths || []).filter(Boolean)
+  if (!list.length) return
+  const { error } = await supabase.storage.from(ASSIGN_BUCKET).remove(list)
+  if (error) console.error('Assignment file cleanup failed:', list, error)
+}
+
+// Step 1 of any upload: check the file details and hand back a one-time upload token
+async function issueAssignmentUpload(prefix, body, res) {
+  const mimeType = String(body?.mimeType || '')
+  const size = Number(body?.size)
+  const ext = RESOURCE_TYPES[mimeType]
+  if (!ext) {
+    res.status(400).json({ error: 'That file type is not allowed. Use a PDF, Word, PowerPoint or image (PNG, JPG, WebP) file.' })
+    return
+  }
+  if (!Number.isFinite(size) || size <= 0) { res.status(400).json({ error: 'That file is empty.' }); return }
+  if (size > ASSIGN_MAX_BYTES) { res.status(400).json({ error: 'That file is too big. The limit is 10MB.' }); return }
+  const path = `${prefix}${crypto.randomUUID()}.${ext}`
+  const { data, error } = await supabase.storage.from(ASSIGN_BUCKET).createSignedUploadUrl(path)
+  if (error) throw error
+  res.json({ path, token: data.token })
+}
+
+// Step 2: confirm a file the browser says it uploaded really is in Storage, under the expected folder,
+// with an allowed type and size. Returns { file } or { error }.
+async function verifyAssignmentFile(prefix, path, name) {
+  const p = String(path || '')
+  const fileKey = p.slice(prefix.length)
+  if (!p.startsWith(prefix) || !/^[0-9a-f-]{36}\.[a-z]{2,4}$/i.test(fileKey)) {
+    return { error: 'That upload is not valid. Please try again.' }
+  }
+  const { data: found, error } = await supabase.storage
+    .from(ASSIGN_BUCKET).list(prefix.replace(/\/$/, ''), { search: fileKey, limit: 10 })
+  if (error) throw error
+  const obj = (found || []).find(f => f.name === fileKey)
+  if (!obj) return { error: 'We could not find the uploaded file. Please try uploading it again.' }
+  const size = Number(obj.metadata?.size) || 0
+  const mime = obj.metadata?.mimetype || ''
+  if (!RESOURCE_TYPES[mime] || size <= 0 || size > ASSIGN_MAX_BYTES) {
+    await removeAssignmentFiles([p])
+    return { error: 'That file is not allowed. Use a PDF, Word, PowerPoint or image file up to 10MB.' }
+  }
+  return { file: { path: p, name: cleanResourceFileName(name), size, mime } }
+}
+
+// Works out the final attachment list for a teacher's create/edit. `requested` is the list the form sent
+// (files to keep plus newly uploaded ones). Returns { attachments, added, removed } or { error }.
+async function resolveAttachments(user, requested, existing) {
+  if (requested === undefined) return { attachments: existing, added: [], removed: [] }
+  if (!Array.isArray(requested) || requested.length > MAX_ASSIGNMENT_ATTACHMENTS) {
+    return { error: `You can attach up to ${MAX_ASSIGNMENT_ATTACHMENTS} files.` }
+  }
+  const keep = new Map(existing.map(a => [a.path, a]))
+  const seen = new Set()
+  const out = []
+  const added = []
+  const prefix = user.org_id ? `${user.org_id}/attachments/${user.id}/` : null
+  for (const item of requested) {
+    const path = String(item?.path || '')
+    if (seen.has(path)) continue
+    seen.add(path)
+    if (keep.has(path)) { out.push(keep.get(path)); continue }
+    if (!prefix) { await removeAssignmentFiles(added.map(a => a.path)); return { error: 'Your account is not linked to a school yet.' } }
+    const r = await verifyAssignmentFile(prefix, path, item?.name)
+    if (r.error) { await removeAssignmentFiles(added.map(a => a.path)); return { error: r.error } }
+    out.push(r.file)
+    added.push(r.file)
+  }
+  return { attachments: out, added, removed: existing.filter(a => !seen.has(a.path)) }
+}
+
+async function signedAssignmentLink(path, fileName, download) {
+  const { data, error } = await supabase.storage.from(ASSIGN_BUCKET)
+    .createSignedUrl(path, ASSIGN_LINK_SECONDS, download ? { download: fileName || true } : undefined)
+  if (error || !data?.signedUrl) throw error || new Error('No link')
+  return data.signedUrl
+}
+
+// What a submission is called on screen. A reopened submission has no grade until it is graded again.
+function submissionLabel(sub) {
+  if (!sub) return null
+  if (sub.status === 'reopened') return 'Reopened'
+  if (hasNumericGrade(sub)) return 'Graded'
+  if (sub.status === 'late' || sub.is_late) return 'Late'
+  return 'Submitted'
+}
+
+function shapeSubmission(sub) {
+  return {
+    id: sub.id,
+    content: sub.content || '',
+    fileUrl: sub.file_url || null,
+    fileName: sub.file_path ? (sub.file_name || 'File') : null,
+    fileSize: sub.file_path ? (sub.file_size || 0) : 0,
+    mimeType: sub.file_path ? (sub.mime_type || '') : '',
+    grade: hasNumericGrade(sub) ? Number(sub.grade) : null,
+    feedback: sub.feedback || '',
+    status: submissionLabel(sub),
+    isLate: !!sub.is_late,
+    submittedAt: sub.submitted_at,
+    reopenedAt: sub.reopened_at || null,
+  }
+}
+const SUBMISSION_COLUMNS = 'id, student_id, content, file_url, file_path, file_name, file_size, mime_type, grade, feedback, status, is_late, submitted_at, graded_at, reopened_at'
+
+// ---------- Student assignments: detail and hand-in (Phase 20) ----------
+// The assignment, only if it belongs to the signed-in student's current class.
+async function loadStudentAssignment(ctx, id, res) {
+  if (!isUuid(id)) { res.status(404).json({ error: 'Assignment not found.' }); return null }
+  const { data: a } = await supabase.from('assignments')
+    .select('id, class_id, title, description, due_date, attachments').eq('id', id).maybeSingle()
+  if (!a || !ctx.student?.class_id || a.class_id !== ctx.student.class_id) {
+    res.status(404).json({ error: 'Assignment not found.' })
+    return null
+  }
+  return a
+}
+
+app.get('/api/student/assignments/:id', verifyToken, studentLimiter, async (req, res) => {
+  try {
+    const ctx = await loadStudent(req.user)
+    if (!ctx) return res.status(403).json({ error: 'Students only' })
+    const a = await loadStudentAssignment(ctx, req.params.id, res)
+    if (!a) return
+
+    const [clsRes, subRes] = await Promise.all([
+      supabase.from('classes').select('id, name, grade').eq('id', a.class_id).maybeSingle(),
+      supabase.from('submissions').select(SUBMISSION_COLUMNS).eq('assignment_id', a.id).eq('student_id', ctx.user.id).maybeSingle(),
+    ])
+    const sub = subRes.data ? shapeSubmission(subRes.data) : null
+    res.json({
+      assignment: {
+        id: a.id, title: a.title, description: a.description || '', dueDate: a.due_date,
+        className: clsRes.data ? classLabel(clsRes.data) : '',
+        attachments: normAttachments(a.attachments).map((f, index) => ({ index, name: f.name, size: f.size, mime: f.mime })),
+      },
+      submission: sub,
+      canSubmit: !sub || sub.status !== 'Graded',
+      isVerified: !!ctx.user.is_verified,
+      serverTime: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.error('Student assignment error:', err)
+    res.status(500).json({ error: 'Could not load this assignment. Please try again.' })
+  }
+})
+
+app.post('/api/student/assignments/:id/upload-url', verifyToken, assignmentFilesLimiter, async (req, res) => {
+  try {
+    const ctx = await loadStudent(req.user)
+    if (!ctx) return res.status(403).json({ error: 'Students only' })
+    if (!ctx.user.is_verified) return res.status(403).json({ error: 'Your account needs to be verified by an admin before you can hand in work.' })
+    if (!ctx.user.org_id) return res.status(400).json({ error: 'Your account is not linked to a school yet.' })
+    const a = await loadStudentAssignment(ctx, req.params.id, res)
+    if (!a) return
+    await issueAssignmentUpload(`${ctx.user.org_id}/submissions/${ctx.user.id}/`, req.body, res)
+  } catch (err) {
+    console.error('Submission upload-url error:', err)
+    res.status(500).json({ error: 'Could not start the upload. Please try again.' })
+  }
+})
+
+// Hand in, or hand in again. Allowed until the work is graded, and again after a teacher reopens it.
+// Anything handed in after the due date is marked late; a reopened submission keeps its original late flag.
+app.post('/api/student/assignments/:id/submit', verifyToken, studentLimiter, async (req, res) => {
+  let newPath = null
+  let done = false
+  try {
+    const ctx = await loadStudent(req.user)
+    if (!ctx) return res.status(403).json({ error: 'Students only' })
+    if (!ctx.user.is_verified) return res.status(403).json({ error: 'Your account needs to be verified by an admin before you can hand in work.' })
+    const a = await loadStudentAssignment(ctx, req.params.id, res)
+    if (!a) return
+
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : ''
+    if (content.length > MAX_SUBMISSION_TEXT) {
+      return res.status(400).json({ error: `Your answer is too long (max ${MAX_SUBMISSION_TEXT} characters).` })
+    }
+
+    const { data: existing } = await supabase.from('submissions')
+      .select('id, status, grade, is_late, file_path').eq('assignment_id', a.id).eq('student_id', ctx.user.id).maybeSingle()
+    if (existing && submissionLabel(existing) === 'Graded') {
+      return res.status(409).json({ error: 'This work has already been graded. Ask your teacher if you need to hand it in again.' })
+    }
+
+    let file = null
+    if (req.body?.path) {
+      if (!ctx.user.org_id) return res.status(400).json({ error: 'Your account is not linked to a school yet.' })
+      const r = await verifyAssignmentFile(`${ctx.user.org_id}/submissions/${ctx.user.id}/`, req.body.path, req.body.fileName)
+      if (r.error) return res.status(400).json({ error: r.error })
+      file = r.file
+      newPath = file.path
+    }
+    const removeFile = req.body?.removeFile === true
+    const keepsOld = !!existing?.file_path && !file && !removeFile
+    if (!content && !file && !keepsOld) {
+      return res.status(400).json({ error: 'Write your answer or attach a file before handing in.' })
+    }
+
+    const wasReopened = existing?.status === 'reopened'
+    const pastDue = !!a.due_date && Date.now() > new Date(a.due_date).getTime()
+    const isLate = wasReopened ? !!existing.is_late : pastDue
+    const row = {
+      content: content || null,
+      status: isLate ? 'late' : 'submitted',
+      is_late: isLate,
+      submitted_at: new Date().toISOString(),
+      grade: null,
+      graded_at: null,
+    }
+    if (file) Object.assign(row, { file_path: file.path, file_url: file.path, file_name: file.name, file_size: file.size, mime_type: file.mime })
+    else if (removeFile) Object.assign(row, { file_path: null, file_url: null, file_name: null, file_size: null, mime_type: null })
+
+    if (existing) {
+      const { error } = await supabase.from('submissions').update(row).eq('id', existing.id)
+      if (error) throw error
+    } else {
+      const { error } = await supabase.from('submissions').insert({ ...row, assignment_id: a.id, student_id: ctx.user.id })
+      if (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'Your work was already handed in. Refresh the page to see it.' })
+        throw error
+      }
+    }
+    done = true
+    // The old file is no longer needed once it has been replaced or removed
+    if (existing?.file_path && (file || removeFile)) await removeAssignmentFiles([existing.file_path])
+    res.json({ success: true, status: isLate ? 'Late' : 'Submitted', isLate })
+  } catch (err) {
+    console.error('Submit error:', err)
+    if (newPath && !done) await removeAssignmentFiles([newPath])
+    res.status(500).json({ error: 'Could not hand in your work. Please try again.' })
+  }
+})
+
+// Student: open their own submitted file
+app.get('/api/student/assignments/:id/submission/file-link', verifyToken, assignmentFilesLimiter, async (req, res) => {
+  try {
+    const ctx = await loadStudent(req.user)
+    if (!ctx) return res.status(403).json({ error: 'Students only' })
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'File not found.' })
+    const { data: sub } = await supabase.from('submissions').select('file_path, file_name')
+      .eq('assignment_id', req.params.id).eq('student_id', ctx.user.id).maybeSingle()
+    if (!sub?.file_path) return res.status(404).json({ error: 'File not found.' })
+    const url = await signedAssignmentLink(sub.file_path, sub.file_name, req.query.download === '1')
+    res.json({ url, fileName: sub.file_name || 'file' })
+  } catch (err) {
+    console.error('Own submission file link error:', err)
+    res.status(500).json({ error: 'Could not open the file. Please try again.' })
+  }
+})
+
 
 // Dashboard summary
 app.get('/api/teacher/overview', verifyToken, teacherLimiter, async (req, res) => {
@@ -844,7 +1125,7 @@ app.get('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res
 
     const roster = await studentsByClass(classIds)
     const { data } = await supabase
-      .from('assignments').select('id, class_id, title, description, due_date').in('class_id', classIds)
+      .from('assignments').select('id, class_id, title, description, due_date, attachments').in('class_id', classIds)
       .eq('created_by', user.id)
     const assignments = data || []
     const stats = await submissionStats(assignments, roster)
@@ -853,6 +1134,7 @@ app.get('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res
     const list = assignments.map(a => ({
       id: a.id, classId: a.class_id, className: className[a.class_id],
       title: a.title, description: a.description || '', dueDate: a.due_date,
+      attachments: normAttachments(a.attachments),
       studentCount: roster[a.class_id].length, ...stats[a.id],
     })).sort((a, b) => {
       if (!a.dueDate) return 1
@@ -880,11 +1162,17 @@ app.post('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, re
       return res.status(400).json({ error: 'Please choose one of your own classes.' })
     }
 
+    const files = await resolveAttachments(user, req.body.attachments, [])
+    if (files.error) return res.status(400).json({ error: files.error })
+
     const { data, error } = await supabase.from('assignments').insert({
       class_id: cls.id, title: input.title, description: input.description,
-      due_date: input.dueDate, created_by: user.id,
+      due_date: input.dueDate, created_by: user.id, attachments: files.attachments,
     }).select('id').single()
-    if (error) throw error
+    if (error) {
+      await removeAssignmentFiles(files.added.map(f => f.path))
+      throw error
+    }
     res.json({ success: true, id: data.id })
 
     // Tell the class (after replying, so a big class never slows the teacher down)
@@ -913,10 +1201,17 @@ app.put('/api/teacher/assignments/:id', verifyToken, teacherLimiter, async (req,
     const input = cleanAssignmentInput(req.body || {})
     if (input.error) return res.status(400).json({ error: input.error })
 
+    const files = await resolveAttachments(user, req.body?.attachments, normAttachments(owned.assignment.attachments))
+    if (files.error) return res.status(400).json({ error: files.error })
+
     const { error } = await supabase.from('assignments')
-      .update({ title: input.title, description: input.description, due_date: input.dueDate })
+      .update({ title: input.title, description: input.description, due_date: input.dueDate, attachments: files.attachments })
       .eq('id', owned.assignment.id)
-    if (error) throw error
+    if (error) {
+      await removeAssignmentFiles(files.added.map(f => f.path))
+      throw error
+    }
+    await removeAssignmentFiles(files.removed.map(f => f.path))
     res.json({ success: true })
   } catch (err) {
     console.error('Update assignment error:', err)
@@ -941,6 +1236,7 @@ app.delete('/api/teacher/assignments/:id', verifyToken, teacherLimiter, async (r
 
     const { error } = await supabase.from('assignments').delete().eq('id', owned.assignment.id)
     if (error) throw error
+    await removeAssignmentFiles(normAttachments(owned.assignment.attachments).map(f => f.path))
     res.json({ success: true })
   } catch (err) {
     console.error('Delete assignment error:', err)
@@ -959,7 +1255,7 @@ app.get('/api/teacher/assignments/:id/submissions', verifyToken, teacherLimiter,
 
     const roster = (await studentsByClass([owned.cls.id]))[owned.cls.id]
     const { data: subs } = await supabase
-      .from('submissions').select('id, student_id, content, file_url, grade, feedback, status, submitted_at')
+      .from('submissions').select(SUBMISSION_COLUMNS)
       .eq('assignment_id', owned.assignment.id)
     const byStudent = Object.fromEntries((subs || []).map(s => [s.student_id, s]))
 
@@ -968,16 +1264,13 @@ app.get('/api/teacher/assignments/:id/submissions', verifyToken, teacherLimiter,
         id: owned.assignment.id, title: owned.assignment.title,
         description: owned.assignment.description || '', dueDate: owned.assignment.due_date,
         className: owned.cls.name,
+        attachments: normAttachments(owned.assignment.attachments).map((f, index) => ({ index, name: f.name, size: f.size, mime: f.mime })),
       },
       rows: roster.map(student => {
         const sub = byStudent[student.id]
         return {
           student,
-          submission: sub ? {
-            id: sub.id, content: sub.content || '', fileUrl: sub.file_url || null,
-            grade: hasNumericGrade(sub) ? Number(sub.grade) : null,
-            feedback: sub.feedback || '', status: sub.status || 'submitted', submittedAt: sub.submitted_at,
-          } : null,
+          submission: sub ? shapeSubmission(sub) : null,
         }
       }),
     })
@@ -1019,7 +1312,7 @@ app.put('/api/teacher/assignments/:id/grade', verifyToken, teacherLimiter, async
           submitted_at: new Date().toISOString(), ...extra,
         })
 
-    let { error } = await write({ status: 'graded' })
+    let { error } = await write({ status: 'graded', graded_at: new Date().toISOString() })
     // If the status column only allows certain values, save the grade without it
     if (error && error.code === '23514') ({ error } = await write({}))
     if (error) throw error
@@ -1028,6 +1321,93 @@ app.put('/api/teacher/assignments/:id/grade', verifyToken, teacherLimiter, async
   } catch (err) {
     console.error('Grade error:', err)
     res.status(500).json({ error: 'Could not save the grade. Please try again.' })
+  }
+})
+
+// Teacher: ask for an upload token for an assignment attachment
+app.post('/api/teacher/attachments/upload-url', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+    if (!user.org_id) return res.status(400).json({ error: 'Your account is not linked to a school yet.' })
+    await issueAssignmentUpload(`${user.org_id}/attachments/${user.id}/`, req.body, res)
+  } catch (err) {
+    console.error('Attachment upload-url error:', err)
+    res.status(500).json({ error: 'Could not start the upload. Please try again.' })
+  }
+})
+
+// Teacher: open a student's submitted file
+app.get('/api/teacher/submissions/:submissionId/file-link', verifyToken, assignmentFilesLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!isUuid(req.params.submissionId)) return res.status(404).json({ error: 'File not found.' })
+    const { data: sub } = await supabase.from('submissions')
+      .select('id, assignment_id, file_path, file_name').eq('id', req.params.submissionId).maybeSingle()
+    if (!sub || !sub.file_path) return res.status(404).json({ error: 'File not found.' })
+    if (!(await getOwnedAssignment(user.id, sub.assignment_id))) return res.status(404).json({ error: 'File not found.' })
+    const url = await signedAssignmentLink(sub.file_path, sub.file_name, req.query.download === '1')
+    res.json({ url, fileName: sub.file_name || 'file' })
+  } catch (err) {
+    console.error('Submission file link error:', err)
+    res.status(500).json({ error: 'Could not open the file. Please try again.' })
+  }
+})
+
+// Teacher or student in the class: open an assignment attachment
+app.get('/api/assignments/:id/attachments/:index/link', verifyToken, assignmentFilesLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'File not found.' })
+    const { data: a } = await supabase.from('assignments')
+      .select('id, class_id, created_by, attachments').eq('id', req.params.id).maybeSingle()
+    if (!a) return res.status(404).json({ error: 'File not found.' })
+    const { data: me } = await supabase.from('users').select('id, role').eq('id', req.user.id).maybeSingle()
+    let allowed = false
+    if (me?.role === 'teacher') {
+      allowed = a.created_by === me.id && await teacherTeaches(me.id, a.class_id)
+    } else if (me?.role === 'student') {
+      const { data: st } = await supabase.from('students').select('class_id').eq('user_id', me.id).maybeSingle()
+      allowed = !!st?.class_id && st.class_id === a.class_id
+    }
+    if (!allowed) return res.status(404).json({ error: 'File not found.' })
+    const file = normAttachments(a.attachments)[Number(req.params.index)]
+    if (!file) return res.status(404).json({ error: 'File not found.' })
+    const url = await signedAssignmentLink(file.path, file.name, req.query.download === '1')
+    res.json({ url, fileName: file.name })
+  } catch (err) {
+    console.error('Attachment link error:', err)
+    res.status(500).json({ error: 'Could not open the file. Please try again.' })
+  }
+})
+
+// Teacher: send a submission back to the student for revision. The grade is cleared (the student's
+// average no longer counts it) and the written feedback stays so the student can see what to fix.
+app.post('/api/teacher/assignments/:id/reopen', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+
+    const owned = await getOwnedAssignment(user.id, req.params.id)
+    if (!owned) return res.status(404).json({ error: 'Assignment not found.' })
+
+    const studentId = req.body?.studentId
+    if (!isUuid(studentId)) return res.status(400).json({ error: 'Choose a student.' })
+    const { data: sub } = await supabase.from('submissions')
+      .select('id, status').eq('assignment_id', owned.assignment.id).eq('student_id', studentId).maybeSingle()
+    if (!sub) return res.status(404).json({ error: 'This student has not handed anything in yet.' })
+    if (sub.status === 'reopened') return res.status(409).json({ error: 'This submission is already open for revision.' })
+
+    const { error } = await supabase.from('submissions')
+      .update({ status: 'reopened', grade: null, graded_at: null, reopened_at: new Date().toISOString() }).eq('id', sub.id)
+    if (error) throw error
+    await notifyUser(studentId, `Your teacher has reopened "${owned.assignment.title}" so you can revise and hand it in again.`, 'warning', `/student/assignments/${owned.assignment.id}`)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Reopen error:', err)
+    res.status(500).json({ error: 'Could not reopen the submission. Please try again.' })
   }
 })
 
