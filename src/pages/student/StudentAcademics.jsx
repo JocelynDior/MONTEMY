@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import StudentPage from '../../components/student/StudentPage'
 import StudentProfileForm from '../../components/student/StudentProfileForm'
 import { useStudentOverview } from '../../hooks/useStudentOverview'
@@ -81,31 +82,32 @@ function ScheduleTab({ data }) {
 }
 
 function HomeworkTab({ data }) {
-  const [open, setOpen] = useState(null)
+  const navigate = useNavigate()
   if (!data.classInfo) return <Empty>Choose your class on the Subjects tab to see your homework.</Empty>
   if (data.homework.length === 0) return <Empty>No homework set for {data.classInfo.name} yet.</Empty>
 
   const list = sortByDue(data.homework)
+  const needsWork = (s) => s === 'Not submitted' || s === 'Overdue' || s === 'Reopened'
   return list.map(h => (
-    <div key={h.id} style={{ ...panel, cursor: 'pointer' }} onClick={() => setOpen(open === h.id ? null : h.id)}>
+    <div key={h.id} role="link" tabIndex={0} aria-label={`Open ${h.title}`} style={{ ...panel, cursor: 'pointer' }}
+      onClick={() => navigate(`/student/assignments/${h.id}`)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/student/assignments/${h.id}`) } }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontWeight: 600 }}>{h.title}</div>
           <div style={{ ...muted, fontSize: '0.8rem' }}>
-            {h.dueDate ? `${fmtDate(h.dueDate)}${h.status === 'Not submitted' || h.status === 'Overdue' ? ` · ${dueIn(h.dueDate)}` : ''}` : 'No due date'}
+            {h.dueDate ? `${fmtDate(h.dueDate)}${needsWork(h.status) ? ` · ${dueIn(h.dueDate)}` : ''}` : 'No due date'}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <span style={{ color: statusColor(h.status), fontWeight: 700 }}>{h.status}</span>
+          {h.status === 'Graded' && h.isLate && <div style={{ ...muted, fontSize: '0.75rem' }}>handed in late</div>}
           {h.grade !== null && <div style={{ color: gradeColor(h.grade), fontWeight: 700 }}>{h.grade}%</div>}
         </div>
       </div>
-      {open === h.id && (
-        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.15)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>
-          {h.description || 'No description.'}
-          {h.feedback && <div style={{ marginTop: '0.75rem', color: C.turquoise }}>Teacher feedback: <span style={{ color: 'white' }}>{h.feedback}</span></div>}
-        </div>
-      )}
+      <div style={{ ...muted, fontSize: '0.8rem', marginTop: '0.5rem' }}>
+        {h.status === 'Not submitted' || h.status === 'Overdue' ? 'Open to read the instructions and hand in' : h.status === 'Reopened' ? 'Open to revise and hand in again' : 'Open to see your work and feedback'}
+      </div>
     </div>
   ))
 }
