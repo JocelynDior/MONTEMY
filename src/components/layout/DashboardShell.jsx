@@ -4,6 +4,7 @@ import { logout } from '../../supabase/authHelpers'
 import { useAuth } from '../../context/AuthContext'
 import { useBranding } from '../../context/BrandingContext'
 import MessagesBell from './MessagesBell'
+import NotificationBell from './NotificationBell'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -39,6 +40,7 @@ export default function DashboardShell({ role, cards = [], children }) {
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           {profile?.name && <span style={{ color: 'rgba(255,255,255,0.8)' }}>{profile.name}</span>}
+          <NotificationBell />
           {verified && <MessagesBell />}
           <button onClick={handleLogout}
             style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem', margin: 0 }}>
