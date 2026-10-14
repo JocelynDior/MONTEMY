@@ -370,9 +370,12 @@ app.post('/api/auth/register-later', registerLimiter, async (req, res) => {
   }
 
   const { data: org } = await supabase
-    .from('organizations').select('id').eq('id', orgId).maybeSingle()
+    .from('organizations').select('id, is_active').eq('id', orgId).maybeSingle()
   if (!org) {
     return res.status(400).json({ error: 'Organisation not found.' })
+  }
+  if (org.is_active === false) {
+    return res.status(400).json({ error: 'This organisation is not accepting new sign-ups.' })
   }
 
   // The database trigger creates the users + role rows from this metadata
@@ -2565,11 +2568,92 @@ app.post('/api/admin/orgs/:orgId/verify-all', verifyToken, requireAdmin, async (
 })
 
 // ----- Organisations -----
+// Phase 19 adds: edit, activate/deactivate, a tutor-org specialisation, logo upload and a detail view.
+// Deactivating an organisation hides it from the sign-up list and stops new sign-ups. Existing members
+// keep their access.
+const ORG_LOGO_BUCKET = 'org-logos'
+const ORG_LOGO_MAX_BYTES = 2 * 1024 * 1024
+const ORG_LOGO_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
+const ORG_COLUMNS = 'id, name, type, address, contact_email, country, specialisation, logo_url, is_active, created_at'
+const ORG_MEMBER_ROLES = ['student', 'teacher', 'parent', 'principal', 'tutor', 'schoolmember']
 
-app.get('/api/admin/orgs', verifyToken, requireAdmin, async (req, res) => {
+const orgAdminLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+function shapeOrg(o, memberCount = null) {
+  return {
+    id: o.id,
+    name: o.name,
+    type: o.type,
+    address: o.address || null,
+    contactEmail: o.contact_email || null,
+    country: o.country || null,
+    specialisation: o.specialisation || null,
+    logoUrl: o.logo_url || null,
+    isActive: o.is_active !== false,
+    createdAt: o.created_at,
+    memberCount,
+  }
+}
+
+// Checks the editable organisation fields. Returns { error } or { fields } ready for the database.
+function parseOrgFields(b, type) {
+  const name = typeof b.name === 'string' ? b.name.trim() : ''
+  if (name.length < 2 || name.length > 120) return { error: 'The name must be 2 to 120 characters.' }
+  const address = typeof b.address === 'string' ? b.address.trim() : ''
+  if (address.length > 200) return { error: 'The address is too long (max 200 characters).' }
+  const country = typeof b.country === 'string' ? b.country.trim() : ''
+  if (country.length > 60) return { error: 'The country is too long (max 60 characters).' }
+  const contactEmail = typeof b.contactEmail === 'string' ? b.contactEmail.trim() : ''
+  if (contactEmail && (contactEmail.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))) {
+    return { error: 'That contact email does not look right.' }
+  }
+  const specialisation = typeof b.specialisation === 'string' ? b.specialisation.trim().replace(/\s+/g, ' ') : ''
+  if (specialisation.length > 120) return { error: 'The specialisation is too long (max 120 characters).' }
+  return {
+    fields: {
+      name,
+      address: address || null,
+      country: country || null,
+      contact_email: contactEmail || null,
+      // Only tutor organisations have a specialisation
+      specialisation: type === 'tutor' ? (specialisation || null) : null,
+    },
+  }
+}
+
+async function orgNameTaken(name, exceptId) {
+  let q = supabase.from('organizations').select('id').ilike('name', escapeLike(name)).limit(1)
+  if (exceptId) q = q.neq('id', exceptId)
+  const { data } = await q
+  return !!(data && data.length)
+}
+
+// The logo is stored as a public URL; this recovers the file path inside the bucket from it
+function orgLogoPath(url) {
+  if (typeof url !== 'string') return null
+  const marker = `/${ORG_LOGO_BUCKET}/`
+  const i = url.indexOf(marker)
+  if (i === -1) return null
+  const path = decodeURIComponent(url.slice(i + marker.length).split('?')[0])
+  return /^[0-9a-f-]{36}\/[0-9a-f-]{36}\.[a-z]{2,4}$/i.test(path) ? path : null
+}
+
+async function removeOrgLogoFile(url) {
+  const path = orgLogoPath(url)
+  if (!path) return
+  const { error } = await supabase.storage.from(ORG_LOGO_BUCKET).remove([path])
+  if (error) console.error('Org logo cleanup failed:', path, error)
+}
+
+app.get('/api/admin/orgs', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
   try {
     const orgs = await fetchAllRows(() => supabase.from('organizations')
-      .select('id, name, type, address, contact_email, country, is_active, created_at').order('name').order('id'))
+      .select(ORG_COLUMNS).order('name').order('id'))
 
     // Member counts for up to 100 organisations (one cheap count query each)
     const counted = orgs.slice(0, 100)
@@ -2577,17 +2661,7 @@ app.get('/api/admin/orgs', verifyToken, requireAdmin, async (req, res) => {
       supabase.from('users').select('id', { count: 'exact', head: true }).eq('org_id', o.id)))
 
     res.json({
-      orgs: orgs.map((o, i) => ({
-        id: o.id,
-        name: o.name,
-        type: o.type,
-        address: o.address || null,
-        contactEmail: o.contact_email || null,
-        country: o.country || null,
-        isActive: o.is_active !== false,
-        createdAt: o.created_at,
-        memberCount: i < counted.length ? (counts[i].count || 0) : null,
-      })),
+      orgs: orgs.map((o, i) => shapeOrg(o, i < counted.length ? (counts[i].count || 0) : null)),
     })
   } catch (err) {
     console.error('Admin orgs error:', err)
@@ -2595,33 +2669,191 @@ app.get('/api/admin/orgs', verifyToken, requireAdmin, async (req, res) => {
   }
 })
 
-app.post('/api/admin/orgs', verifyToken, requireAdmin, async (req, res) => {
+app.post('/api/admin/orgs', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
   try {
     const b = req.body || {}
-    const name = typeof b.name === 'string' ? b.name.trim() : ''
-    if (name.length < 2 || name.length > 120) return res.status(400).json({ error: 'The name must be 2 to 120 characters.' })
     if (!ORG_TYPES.includes(b.type)) return res.status(400).json({ error: 'Choose school or tutor organisation.' })
-    const address = typeof b.address === 'string' ? b.address.trim() : ''
-    if (address.length > 200) return res.status(400).json({ error: 'The address is too long (max 200 characters).' })
-    const country = typeof b.country === 'string' ? b.country.trim() : ''
-    if (country.length > 60) return res.status(400).json({ error: 'The country is too long (max 60 characters).' })
-    const contactEmail = typeof b.contactEmail === 'string' ? b.contactEmail.trim() : ''
-    if (contactEmail && (contactEmail.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))) {
-      return res.status(400).json({ error: 'That contact email does not look right.' })
+    const parsed = parseOrgFields(b, b.type)
+    if (parsed.error) return res.status(400).json({ error: parsed.error })
+
+    if (await orgNameTaken(parsed.fields.name)) {
+      return res.status(409).json({ error: 'An organisation with that name already exists.' })
     }
 
-    const { data: dup } = await supabase.from('organizations').select('id').ilike('name', escapeLike(name)).limit(1)
-    if (dup && dup.length) return res.status(409).json({ error: 'An organisation with that name already exists.' })
-
-    const { data, error } = await supabase.from('organizations').insert({
-      name, type: b.type, address: address || null, country: country || null,
-      contact_email: contactEmail || null, is_active: true,
-    }).select('id').single()
+    const { data, error } = await supabase.from('organizations')
+      .insert({ ...parsed.fields, type: b.type, is_active: true }).select('id').single()
     if (error) throw error
     res.json({ success: true, id: data.id })
   } catch (err) {
     console.error('Create org error:', err)
     res.status(500).json({ error: 'Could not create the organisation. Please try again.' })
+  }
+})
+
+// Edit an organisation. The type cannot change once created. isActive switches it on or off.
+app.patch('/api/admin/orgs/:id', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const { data: org } = await supabase.from('organizations').select('id, type').eq('id', req.params.id).maybeSingle()
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+
+    const b = req.body || {}
+    const update = {}
+    if (b.name !== undefined) {
+      const parsed = parseOrgFields(b, org.type)
+      if (parsed.error) return res.status(400).json({ error: parsed.error })
+      if (await orgNameTaken(parsed.fields.name, org.id)) {
+        return res.status(409).json({ error: 'An organisation with that name already exists.' })
+      }
+      Object.assign(update, parsed.fields)
+    }
+    if (b.isActive !== undefined) {
+      if (typeof b.isActive !== 'boolean') return res.status(400).json({ error: 'Invalid status.' })
+      update.is_active = b.isActive
+    }
+    if (!Object.keys(update).length) return res.status(400).json({ error: 'Nothing to change.' })
+
+    const { error } = await supabase.from('organizations').update(update).eq('id', org.id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Update org error:', err)
+    res.status(500).json({ error: 'Could not save the changes. Please try again.' })
+  }
+})
+
+// Detail view: who belongs to the organisation, its classes and its numbers
+app.get('/api/admin/orgs/:id', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const { data: org, error: orgErr } = await supabase.from('organizations')
+      .select(ORG_COLUMNS).eq('id', req.params.id).maybeSingle()
+    if (orgErr) throw orgErr
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+
+    const pendingQ = supabase.from('users').select('id', { count: 'exact', head: true })
+      .eq('org_id', org.id).eq('is_verified', false).neq('role', 'admin')
+    const sessionsQ = supabase.from('tutor_sessions').select('id', { count: 'exact', head: true }).eq('org_id', org.id)
+
+    const [roleCounts, pendingRes, members, stats, sessionsRes] = await Promise.all([
+      Promise.all(ORG_MEMBER_ROLES.map(r => countOrgUsers(org.id, r))),
+      pendingQ,
+      fetchAllRows(() => supabase.from('users')
+        .select('id, name, username, email, role, is_verified, is_suspended, created_at')
+        .eq('org_id', org.id).neq('role', 'admin').order('role').order('name').order('id')),
+      org.type === 'school' ? computeSchoolStats(org.id, DEFAULT_RISK_THRESHOLD) : Promise.resolve(null),
+      org.type === 'tutor' ? sessionsQ : Promise.resolve(null),
+    ])
+    if (pendingRes.error) throw pendingRes.error
+
+    const byRole = Object.fromEntries(ORG_MEMBER_ROLES.map((r, i) => [r, roleCounts[i]]))
+    const total = roleCounts.reduce((a, b) => a + b, 0)
+
+    res.json({
+      org: shapeOrg(org, total),
+      byRole,
+      pending: pendingRes.count || 0,
+      members: members.slice(0, 500).map(u => ({
+        id: u.id,
+        name: displayName(u),
+        username: u.username || null,
+        email: u.email,
+        role: u.role,
+        isVerified: !!u.is_verified,
+        isSuspended: !!u.is_suspended,
+        createdAt: u.created_at,
+      })),
+      membersTruncated: members.length > 500,
+      classes: stats ? stats.classes : [],
+      schoolStats: stats ? { average: stats.average, gradedCount: stats.gradedCount, atRiskTotal: stats.atRiskTotal } : null,
+      tutorStats: sessionsRes ? { sessions: sessionsRes.count || 0 } : null,
+    })
+  } catch (err) {
+    console.error('Org detail error:', err)
+    res.status(500).json({ error: 'Could not load this organisation. Please try again.' })
+  }
+})
+
+// Logo, step 1: check the file details and hand back a one-time upload token (same pattern as resources)
+app.post('/api/admin/orgs/:id/logo/upload-url', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const { data: org } = await supabase.from('organizations').select('id').eq('id', req.params.id).maybeSingle()
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+
+    const ext = ORG_LOGO_TYPES[String(req.body?.mimeType || '')]
+    const size = Number(req.body?.size)
+    if (!ext) return res.status(400).json({ error: 'Use a PNG, JPG or WebP image for the logo.' })
+    if (!Number.isFinite(size) || size <= 0) return res.status(400).json({ error: 'That file is empty.' })
+    if (size > ORG_LOGO_MAX_BYTES) return res.status(400).json({ error: 'That logo is too big. The limit is 2MB.' })
+
+    const path = `${org.id}/${crypto.randomUUID()}.${ext}`
+    const { data, error } = await supabase.storage.from(ORG_LOGO_BUCKET).createSignedUploadUrl(path)
+    if (error) throw error
+    res.json({ path, token: data.token })
+  } catch (err) {
+    console.error('Org logo upload-url error:', err)
+    res.status(500).json({ error: 'Could not start the upload. Please try again.' })
+  }
+})
+
+// Logo, step 2: confirm the file arrived, save its public link and remove the old logo file
+app.post('/api/admin/orgs/:id/logo', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  let removeOnFail = null
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const { data: org } = await supabase.from('organizations').select('id, logo_url').eq('id', req.params.id).maybeSingle()
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+
+    // The path must be one this API issued for this organisation
+    const path = String(req.body?.path || '')
+    const fileKey = path.slice(org.id.length + 1)
+    if (!path.startsWith(`${org.id}/`) || !/^[0-9a-f-]{36}\.[a-z]{2,4}$/i.test(fileKey)) {
+      return res.status(400).json({ error: 'That upload is not valid. Please try again.' })
+    }
+
+    removeOnFail = path
+    const { data: found, error: listErr } = await supabase.storage
+      .from(ORG_LOGO_BUCKET).list(org.id, { search: fileKey, limit: 10 })
+    if (listErr) throw listErr
+    const obj = (found || []).find(f => f.name === fileKey)
+    if (!obj) {
+      removeOnFail = null
+      return res.status(400).json({ error: 'We could not find the uploaded file. Please try uploading it again.' })
+    }
+    const size = Number(obj.metadata?.size) || 0
+    if (!ORG_LOGO_TYPES[obj.metadata?.mimetype || ''] || size <= 0 || size > ORG_LOGO_MAX_BYTES) {
+      await supabase.storage.from(ORG_LOGO_BUCKET).remove([path])
+      removeOnFail = null
+      return res.status(400).json({ error: 'That file is not allowed. Use a PNG, JPG or WebP image up to 2MB.' })
+    }
+
+    const { data: pub } = supabase.storage.from(ORG_LOGO_BUCKET).getPublicUrl(path)
+    const { error } = await supabase.from('organizations').update({ logo_url: pub.publicUrl }).eq('id', org.id)
+    if (error) throw error
+
+    removeOnFail = null
+    if (org.logo_url) await removeOrgLogoFile(org.logo_url)
+    res.json({ success: true, logoUrl: pub.publicUrl })
+  } catch (err) {
+    console.error('Org logo save error:', err)
+    if (removeOnFail) await supabase.storage.from(ORG_LOGO_BUCKET).remove([removeOnFail]).catch(() => {})
+    res.status(500).json({ error: 'Could not save the logo. Please try again.' })
+  }
+})
+
+app.delete('/api/admin/orgs/:id/logo', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const { data: org } = await supabase.from('organizations').select('id, logo_url').eq('id', req.params.id).maybeSingle()
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+    const { error } = await supabase.from('organizations').update({ logo_url: null }).eq('id', org.id)
+    if (error) throw error
+    if (org.logo_url) await removeOrgLogoFile(org.logo_url)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Org logo remove error:', err)
+    res.status(500).json({ error: 'Could not remove the logo. Please try again.' })
   }
 })
 
