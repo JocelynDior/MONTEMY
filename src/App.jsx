@@ -14,6 +14,7 @@ import PendingVerification from './pages/auth/PendingVerification'
 import StudentDashboard from './pages/student/StudentDashboard'
 import StudentAcademics from './pages/student/StudentAcademics'
 import StudentResources from './pages/student/StudentResources'
+import TeacherResources from './pages/teacher/TeacherResources'
 import StudentAiTutor from './pages/student/StudentAiTutor'
 
 import TeacherDashboard from './pages/teacher/TeacherDashboard'
@@ -80,6 +81,7 @@ export default function App() {
           <Route path="/teacher/classes" element={guard('teacher', <TeacherClasses />)} />
           <Route path="/teacher/assignments" element={guard('teacher', <TeacherAssignments />)} />
           <Route path="/teacher/progress" element={guard('teacher', <TeacherProgress />)} />
+          <Route path="/teacher/resources" element={guard('teacher', <TeacherResources />)} />
 
           {/* Parent */}
           <Route path="/parent/dashboard" element={guard('parent', <ParentDashboard />)} />
