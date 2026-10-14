@@ -40,6 +40,7 @@ import AdminUsers from './pages/admin/AdminUsers'
 import AdminClasses from './pages/admin/AdminClasses'
 import Messages from './pages/shared/Messages'
 import AdminOrgs from './pages/admin/AdminOrgs'
+import AdminOrgDetail from './pages/admin/AdminOrgDetail'
 
 // Signed in AND the right role
 const guard = (role, element) => (
@@ -107,6 +108,7 @@ export default function App() {
           <Route path="/admin/classes" element={guard('admin', <AdminClasses />)} />
           <Route path="/admin/chat" element={<Navigate to="/messages" replace />} />
           <Route path="/admin/organisations" element={guard('admin', <AdminOrgs />)} />
+          <Route path="/admin/organisations/:id" element={guard('admin', <AdminOrgDetail />)} />
 
           {/* Anything else */}
           <Route path="*" element={<Navigate to="/" replace />} />
