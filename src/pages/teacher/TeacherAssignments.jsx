@@ -1,8 +1,10 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import TeacherPage from '../../components/teacher/TeacherPage'
 import { useApiData } from '../../hooks/useApiData'
 import { apiFetch } from '../../api/apiClient'
 import { dueIn, fmtDate, gradeColor, statusColor } from '../../components/student/studentUtils'
+import { ACCEPT, fmtSize, iconFor } from '../../components/resources/resourceUtils'
+import { openAssignmentFile, uploadAssignmentFile } from '../../components/assignments/assignmentFiles'
 import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
 
 const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
@@ -11,6 +13,28 @@ const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', 
 const ghostBtn = { ...glassBtn, width: 'auto', padding: '0.45rem 1rem', fontSize: '0.85rem', background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }
 const smallBtn = { ...glassBtn, width: 'auto', padding: '0.45rem 1rem', fontSize: '0.85rem' }
 const isLink = (u) => typeof u === 'string' && /^https?:\/\//i.test(u)
+const MAX_FILES = 3
+
+// A button that fetches a fresh signed link and opens the file
+function FileButton({ name, size, mime, linkPath }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const open = async () => {
+    setBusy(true); setErr('')
+    try { await openAssignmentFile(linkPath) } catch (e) { setErr(e.message || 'Could not open the file.') }
+    setBusy(false)
+  }
+  return (
+    <span style={{ display: 'inline-block', marginRight: '0.5rem', marginBottom: '0.4rem' }}>
+      <button type="button" onClick={open} disabled={busy} style={{ ...ghostBtn, display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+        <span aria-hidden="true">{iconFor(mime)}</span>
+        <span style={{ overflowWrap: 'anywhere' }}>{busy ? 'Opening...' : name}</span>
+        {size ? <span style={{ ...muted, fontSize: '0.75rem' }}>{fmtSize(size)}</span> : null}
+      </button>
+      {err && <div role="alert" style={{ color: '#ffb3b3', fontSize: '0.8rem' }}>{err}</div>}
+    </span>
+  )
+}
 
 // ISO date -> value for <input type="datetime-local">
 function toLocalInput(iso) {
@@ -35,15 +59,33 @@ function AssignmentForm({ classes, assignment, onDone, onCancel }) {
   const [title, setTitle] = useState(assignment?.title || '')
   const [description, setDescription] = useState(assignment?.description || '')
   const [due, setDue] = useState(toLocalInput(assignment?.dueDate))
+  const [files, setFiles] = useState(assignment?.attachments || [])
+  const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const fileRef = useRef(null)
+
+  const addFile = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (files.length >= MAX_FILES) return setError(`You can attach up to ${MAX_FILES} files.`)
+    setUploading(true); setError('')
+    try {
+      const uploaded = await uploadAssignmentFile('/api/teacher/attachments/upload-url', file)
+      setFiles(f => [...f, uploaded])
+    } catch (err) {
+      setError(err.message || 'The file could not be uploaded.')
+    }
+    setUploading(false)
+  }
 
   const save = async (e) => {
     e.preventDefault()
     setError('')
     setSaving(true)
     try {
-      const body = { classId, title, description, dueDate: due ? new Date(due).toISOString() : null }
+      const body = { classId, title, description, dueDate: due ? new Date(due).toISOString() : null, attachments: files.map(f => ({ path: f.path, name: f.name })) }
       if (editing) await apiFetch(`/api/teacher/assignments/${assignment.id}`, { method: 'PUT', body })
       else await apiFetch('/api/teacher/assignments', { method: 'POST', body })
       onDone()
@@ -76,13 +118,31 @@ function AssignmentForm({ classes, assignment, onDone, onCancel }) {
           onChange={e => setDescription(e.target.value)} maxLength={5000} placeholder="What should students do?" />
       </div>
 
-      <div style={{ marginBottom: '1.25rem' }}>
+      <div style={{ marginBottom: '1rem' }}>
         <label style={labelStyle}>Due date</label>
         <input style={glassInput} type="datetime-local" value={due} onChange={e => setDue(e.target.value)} />
       </div>
 
+      <div style={{ marginBottom: '1.25rem' }}>
+        <label style={labelStyle} htmlFor="as-file">Attachments (up to {MAX_FILES}; PDF, Word, PowerPoint or image, 10MB each)</label>
+        {files.map(f => (
+          <div key={f.path} style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
+            <span aria-hidden="true">{iconFor(f.mime)}</span>
+            <span style={{ overflowWrap: 'anywhere' }}>{f.name}</span>
+            <span style={{ ...muted, fontSize: '0.75rem' }}>{fmtSize(f.size)}</span>
+            <button type="button" onClick={() => setFiles(list => list.filter(x => x.path !== f.path))} style={{ ...ghostBtn, color: '#ffb3b3' }}>Remove</button>
+          </div>
+        ))}
+        {files.length < MAX_FILES && (
+          <>
+            <input id="as-file" ref={fileRef} type="file" accept={ACCEPT} onChange={addFile} disabled={uploading || saving} style={{ color: 'white', fontSize: '0.9rem' }} />
+            {uploading && <div style={{ ...muted, marginTop: '0.3rem' }}>Uploading...</div>}
+          </>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <button type="submit" disabled={saving} style={{ ...glassBtn, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Create assignment'}</button>
+        <button type="submit" disabled={saving || uploading} style={{ ...glassBtn, opacity: saving || uploading ? 0.7 : 1 }}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Create assignment'}</button>
         <button type="button" onClick={onCancel} style={{ ...glassBtn, background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }}>Cancel</button>
       </div>
     </form>
@@ -96,7 +156,21 @@ function SubmissionRow({ row, assignmentId, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null) // { ok, text }
 
-  const status = !sub ? 'Not submitted' : sub.grade !== null ? 'Graded' : 'Submitted'
+  const status = sub ? sub.status : 'Not submitted'
+  const [reopening, setReopening] = useState(false)
+
+  const reopen = async () => {
+    if (!window.confirm(`Send ${row.student.name}'s work back for revision? Their grade will be cleared until you grade it again. Your feedback stays so they can see what to fix.`)) return
+    setMsg(null)
+    setReopening(true)
+    try {
+      await apiFetch(`/api/teacher/assignments/${assignmentId}/reopen`, { method: 'POST', body: { studentId: row.student.id } })
+      onSaved()
+    } catch (err) {
+      setMsg({ ok: false, text: err.message || 'Could not reopen.' })
+    }
+    setReopening(false)
+  }
 
   const save = async () => {
     setMsg(null)
@@ -119,7 +193,7 @@ function SubmissionRow({ row, assignmentId, onSaved }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
         <div>
           <div style={{ fontWeight: 600 }}>{row.student.name}</div>
-          <div style={{ ...muted, fontSize: '0.8rem' }}>{sub ? `Submitted ${fmtDate(sub.submittedAt)}` : 'Nothing handed in yet'}</div>
+          <div style={{ ...muted, fontSize: '0.8rem' }}>{sub ? `Handed in ${fmtDate(sub.submittedAt)}${sub.isLate ? ' · late' : ''}` : 'Nothing handed in yet'}</div>
         </div>
         <span style={{ color: statusColor(status), fontWeight: 700 }}>{status}</span>
       </div>
@@ -129,7 +203,12 @@ function SubmissionRow({ row, assignmentId, onSaved }) {
           {sub.content}
         </div>
       )}
-      {isLink(sub?.fileUrl) && (
+      {sub?.fileName && (
+        <div style={{ marginBottom: '0.5rem' }}>
+          <FileButton name={sub.fileName} size={sub.fileSize} mime={sub.mimeType} linkPath={`/api/teacher/submissions/${sub.id}/file-link`} />
+        </div>
+      )}
+      {!sub?.fileName && isLink(sub?.fileUrl) && (
         <div style={{ marginBottom: '0.75rem' }}>
           <a href={sub.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.turquoise, fontWeight: 600 }}>Open attached file</a>
         </div>
@@ -149,7 +228,13 @@ function SubmissionRow({ row, assignmentId, onSaved }) {
         <button onClick={save} disabled={saving || grade === ''} style={{ ...smallBtn, opacity: saving || grade === '' ? 0.5 : 1 }}>
           {saving ? 'Saving...' : 'Save grade'}
         </button>
+        {sub && status !== 'Reopened' && (
+          <button onClick={reopen} disabled={reopening || saving} style={{ ...ghostBtn, opacity: reopening ? 0.6 : 1 }}>
+            {reopening ? 'Reopening...' : 'Reopen for revision'}
+          </button>
+        )}
       </div>
+      {status === 'Reopened' && <div style={{ ...muted, fontSize: '0.85rem', marginTop: '0.5rem' }}>Sent back to the student. You can grade it again once they hand it in.</div>}
       {msg && <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: msg.ok ? '#7CFC9A' : '#ffb3b3' }}>{msg.text}</div>}
     </div>
   )
@@ -170,6 +255,13 @@ function SubmissionsPanel({ assignmentId, onBack }) {
             <div style={muted}>{data.assignment.className}{data.assignment.dueDate ? ` · Due ${fmtDate(data.assignment.dueDate)}` : ''}</div>
             {data.assignment.description && (
               <div style={{ marginTop: '0.75rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{data.assignment.description}</div>
+            )}
+            {data.assignment.attachments.length > 0 && (
+              <div style={{ marginTop: '0.75rem' }}>
+                {data.assignment.attachments.map(f => (
+                  <FileButton key={f.index} name={f.name} size={f.size} mime={f.mime} linkPath={`/api/assignments/${assignmentId}/attachments/${f.index}/link`} />
+                ))}
+              </div>
             )}
           </div>
           {data.rows.length === 0
@@ -257,7 +349,7 @@ export default function TeacherAssignments() {
             <div>
               <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>{a.title}</div>
               <div style={{ ...muted, fontSize: '0.85rem' }}>
-                {a.className} · {a.dueDate ? `${fmtDate(a.dueDate)} · ${dueIn(a.dueDate)}` : 'No due date'}
+                {a.className} · {a.dueDate ? `${fmtDate(a.dueDate)} · ${dueIn(a.dueDate)}` : 'No due date'}{a.attachments?.length ? ` · ${a.attachments.length} file${a.attachments.length === 1 ? '' : 's'} attached` : ''}
               </div>
             </div>
             <div style={{ textAlign: 'right', fontSize: '0.85rem' }}>
