@@ -147,6 +147,7 @@ app.post('/api/admin/verify-user', verifyToken, requireAdmin, async (req, res) =
   if (action === 'approve') {
     const { error } = await supabase.from('users').update({ is_verified: true }).eq('id', userId)
     if (error) return res.status(500).json({ error: error.message })
+    await notifyUser(userId, 'Your account has been verified. You now have full access.', 'success', ROLE_HOME[target.role] || null)
     return res.json({ success: true, message: 'User approved' })
   }
 
@@ -882,6 +883,15 @@ app.post('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, re
     }).select('id').single()
     if (error) throw error
     res.json({ success: true, id: data.id })
+
+    // Tell the class (after replying, so a big class never slows the teacher down)
+    afterReply('Assignment', async () => {
+      const roster = (await studentsByClass([cls.id]))[cls.id] || []
+      if (!roster.length) return
+      const { data: c } = await supabase.from('classes').select('id, name, grade').eq('id', cls.id).maybeSingle()
+      const due = input.dueDate ? ` Due ${new Date(input.dueDate).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}.` : ''
+      await notifyMany(roster.map(st => st.id), `New assignment${c ? ` for ${classLabel(c)}` : ''}: "${input.title}".${due}`, 'info', '/student/academics')
+    })
   } catch (err) {
     console.error('Create assignment error:', err)
     res.status(500).json({ error: 'Could not create the assignment. Please try again.' })
@@ -1010,6 +1020,7 @@ app.put('/api/teacher/assignments/:id/grade', verifyToken, teacherLimiter, async
     // If the status column only allows certain values, save the grade without it
     if (error && error.code === '23514') ({ error } = await write({}))
     if (error) throw error
+    await notifyUser(studentId, `Your grade for "${owned.assignment.title}" has been posted: ${g}/100.`, 'success', '/student/academics')
     res.json({ success: true })
   } catch (err) {
     console.error('Grade error:', err)
@@ -1203,9 +1214,46 @@ async function removeChildLink(parentId, studentId) {
 }
 
 // Notifications are a nice-to-have; a failure here never breaks the request
-async function notifyUser(userId, content, type = 'info') {
-  const { error } = await supabase.from('notifications').insert({ user_id: userId, type, content })
+async function notifyUser(userId, content, type = 'info', link = null) {
+  const { error } = await supabase.from('notifications').insert({ user_id: userId, type, content, link })
   if (error) console.error('Notification insert failed:', error.message)
+}
+
+// The same message to many people (inserted 500 at a time). Never throws.
+async function notifyMany(userIds, content, type = 'info', link = null) {
+  try {
+    const ids = [...new Set((userIds || []).filter(Boolean))]
+    const text = String(content).slice(0, 300)
+    for (let i = 0; i < ids.length; i += 500) {
+      const rows = ids.slice(i, i + 500).map(id => ({ user_id: id, type, content: text, link }))
+      const { error } = await supabase.from('notifications').insert(rows)
+      if (error) console.error('Bulk notification insert failed:', error.message)
+    }
+  } catch (err) {
+    console.error('Bulk notification error:', err)
+  }
+}
+
+// Runs notification work after the response has gone out; a failure is logged, never sent to the user
+function afterReply(label, fn) {
+  Promise.resolve().then(fn).catch(err => console.error(`${label} notifications failed:`, err))
+}
+
+const ROLE_HOME = {
+  student: '/student/dashboard', teacher: '/teacher/dashboard', parent: '/parent/dashboard',
+  principal: '/principal/dashboard', tutor: '/tutor/dashboard', schoolmember: '/schoolmember/dashboard',
+  admin: '/admin/dashboard',
+}
+
+// Verified, active users in an organisation (optionally one role only)
+async function orgRecipientIds(orgId, { role, excludeId } = {}) {
+  const rows = await fetchAllRows(() => {
+    let q = supabase.from('users').select('id').eq('org_id', orgId).eq('is_verified', true)
+      .or('is_suspended.is.null,is_suspended.eq.false').order('id')
+    if (role) q = q.eq('role', role)
+    return q
+  })
+  return rows.map(r => r.id).filter(id => id !== excludeId)
 }
 
 // { userId: { id, name, username, email } }. email is for admin-only routes; everything else must not return it.
@@ -1265,7 +1313,8 @@ async function decideLinkRequest(requestId, action, actor, { onlyStudentId } = {
     status === 'accepted'
       ? `Your request to link ${childName} was accepted. You can now see their progress.`
       : `Your request to link ${childName} was declined.`,
-    status === 'accepted' ? 'success' : 'warning'
+    status === 'accepted' ? 'success' : 'warning',
+    '/parent/dashboard'
   )
   return { ok: true, status }
 }
@@ -1403,7 +1452,7 @@ app.post('/api/parent/link-requests', verifyToken, parentLimiter, linkRequestLim
       }
     }
 
-    await notifyUser(studentId, `${user.name || 'A parent'} asked to be linked to your account as your parent. Open your dashboard to accept or decline.`)
+    await notifyUser(studentId, `${user.name || 'A parent'} asked to be linked to your account as your parent. Open your dashboard to accept or decline.`, 'info', '/student/dashboard')
     res.json({ success: true })
   } catch (err) {
     console.error('Link request error:', err)
@@ -1898,6 +1947,12 @@ app.post('/api/principal/events', verifyToken, principalLimiter, async (req, res
       .insert({ ...input, org_id: user.org_id, created_by: user.id }).select('id').single()
     if (error) throw error
     res.json({ success: true, id: data.id })
+
+    afterReply('Event', async () => {
+      const recipients = await orgRecipientIds(user.org_id, { excludeId: user.id })
+      const when = new Date(input.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
+      await notifyMany(recipients, `New event: "${input.title}" on ${when}.`, 'info')
+    })
   } catch (err) {
     console.error('Create event error:', err)
     res.status(500).json({ error: 'Could not save the event. Please try again.' })
@@ -2209,7 +2264,7 @@ app.post('/api/tutor/sessions', verifyToken, tutorLimiter, async (req, res) => {
       .insert({ ...input.value, tutor_id: user.id, student_id: body.studentId, org_id: user.org_id }).select('id').single()
     if (error) throw error
 
-    await notifyUser(body.studentId, `${user.name || 'Your tutor'} scheduled a tutoring session with you. Check your dashboard for the time.`)
+    await notifyUser(body.studentId, `${user.name || 'Your tutor'} scheduled a tutoring session with you. Check your dashboard for the time.`, 'info', '/student/dashboard')
     res.json({ success: true, id: data.id })
   } catch (err) {
     console.error('Create session error:', err)
@@ -2440,7 +2495,7 @@ app.post('/api/admin/users/:id/action', verifyToken, requireAdmin, async (req, r
     if (action === 'verify') {
       const { error } = await supabase.from('users').update({ is_verified: true }).eq('id', target.id)
       if (error) throw error
-      if (!target.is_verified) await notifyUser(target.id, 'Your account has been verified. You now have full access.', 'success')
+      if (!target.is_verified) await notifyUser(target.id, 'Your account has been verified. You now have full access.', 'success', ROLE_HOME[target.role] || null)
       return res.json({ success: true })
     }
 
@@ -2501,6 +2556,7 @@ app.post('/api/admin/orgs/:orgId/verify-all', verifyToken, requireAdmin, async (
     const { data, error } = await supabase.from('users').update({ is_verified: true })
       .eq('org_id', req.params.orgId).eq('is_verified', false).neq('role', 'admin').select('id')
     if (error) throw error
+    await notifyMany((data || []).map(u => u.id), 'Your account has been verified. You now have full access.', 'success')
     res.json({ success: true, count: (data || []).length })
   } catch (err) {
     console.error('Verify all error:', err)
@@ -3182,6 +3238,16 @@ app.post('/api/resources', verifyToken, resourcesLimiter, async (req, res) => {
 
     removeOnFail = null
     res.json({ id: row.id })
+
+    // Tell the school's students (only that grade, when the resource has one)
+    afterReply('Resource', async () => {
+      let studentIds = await orgRecipientIds(orgId, { role: 'student' })
+      if (grade && studentIds.length) {
+        const rows = await fetchIn('students', 'user_id, grade', 'user_id', studentIds, ['user_id'])
+        studentIds = rows.filter(r => String(r.grade) === grade).map(r => r.user_id)
+      }
+      await notifyMany(studentIds, `New ${isPastPaper ? 'past paper' : 'study material'}: "${title}" (${subject}).`, 'info', '/student/resources')
+    })
   } catch (err) {
     console.error('Resource save error:', err)
     if (removeOnFail) {
@@ -3309,6 +3375,99 @@ app.delete('/api/resources/:id', verifyToken, resourcesLimiter, async (req, res)
   } catch (err) {
     console.error('Resource delete error:', err)
     res.status(500).json({ error: 'Could not delete that resource. Please try again.' })
+  }
+})
+
+// ---------- Notifications (Phase 18) ----------
+// Rows are written by this API (notifyUser / notifyMany). The browser only reads its own through
+// Realtime (to know "something new arrived") and asks this API for the actual list.
+const NOTIFICATION_TYPES = ['info', 'success', 'warning']
+
+const notificationsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+const broadcastLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'You are sending broadcasts too quickly. Wait a few minutes and try again.' },
+})
+
+// Latest notifications plus the unread count
+app.get('/api/notifications', verifyToken, notificationsLimiter, async (req, res) => {
+  try {
+    const [{ data, error }, { count, error: countErr }] = await Promise.all([
+      supabase.from('notifications').select('id, type, content, link, read, created_at')
+        .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(20),
+      supabase.from('notifications').select('id', { count: 'exact', head: true })
+        .eq('user_id', req.user.id).eq('read', false),
+    ])
+    if (error) throw error
+    if (countErr) throw countErr
+    res.json({
+      unread: count || 0,
+      notifications: (data || []).map(n => ({
+        id: n.id,
+        type: NOTIFICATION_TYPES.includes(n.type) ? n.type : 'info',
+        content: n.content,
+        link: typeof n.link === 'string' && n.link.startsWith('/') ? n.link : null,
+        read: n.read === true,
+        createdAt: n.created_at,
+      })),
+    })
+  } catch (err) {
+    console.error('Notifications list error:', err)
+    res.status(500).json({ error: 'Could not load notifications.' })
+  }
+})
+
+// Mark one notification (body.id) or all of them (body.all = true) as read
+app.post('/api/notifications/read', verifyToken, notificationsLimiter, async (req, res) => {
+  try {
+    let q = supabase.from('notifications').update({ read: true }).eq('user_id', req.user.id).eq('read', false)
+    if (req.body?.all === true) {
+      // every unread notification of this user
+    } else if (UUID_RE.test(String(req.body?.id))) {
+      q = q.eq('id', req.body.id)
+    } else {
+      return res.status(400).json({ error: 'Nothing to mark as read.' })
+    }
+    const { error } = await q
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Notifications read error:', err)
+    res.status(500).json({ error: 'Could not update notifications.' })
+  }
+})
+
+// Admin: send one message to everyone in an organisation (optionally one role only)
+app.post('/api/admin/notifications/broadcast', verifyToken, requireAdmin, broadcastLimiter, async (req, res) => {
+  try {
+    const { orgId } = req.body || {}
+    if (!UUID_RE.test(String(orgId))) return res.status(400).json({ error: 'Choose an organisation.' })
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : ''
+    if (!content) return res.status(400).json({ error: 'Type a message first.' })
+    if (content.length > 300) return res.status(400).json({ error: 'The message is too long (max 300 characters).' })
+    const type = NOTIFICATION_TYPES.includes(req.body?.type) ? req.body.type : 'info'
+    const role = req.body?.role ? String(req.body.role) : null
+    if (role && !ROLE_HOME[role]) return res.status(400).json({ error: 'That audience is not valid.' })
+
+    const { data: org } = await supabase.from('organizations').select('id, name').eq('id', orgId).maybeSingle()
+    if (!org) return res.status(404).json({ error: 'That organisation was not found.' })
+
+    const recipients = await orgRecipientIds(orgId, { role })
+    if (!recipients.length) return res.status(400).json({ error: 'No verified users match that audience yet.' })
+
+    await notifyMany(recipients, content, type)
+    res.json({ success: true, sent: recipients.length, orgName: org.name })
+  } catch (err) {
+    console.error('Broadcast error:', err)
+    res.status(500).json({ error: 'Could not send the broadcast. Please try again.' })
   }
 })
 
