@@ -106,6 +106,7 @@ export default function Register() {
     const { data, error } = await supabase
       .from('organizations')
       .select('id, name, type')
+      .neq('is_active', false)
       .order('name')
     if (error) {
       console.error(error)
