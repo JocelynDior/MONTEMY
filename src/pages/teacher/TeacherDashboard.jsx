@@ -11,7 +11,7 @@ const cards = [
   { icon: '📊', title: 'Grade Book', description: 'Grades, averages and students at risk', path: '/teacher/progress', requiresVerification: true },
   { icon: '📚', title: 'Resources', description: 'Upload notes, worksheets and past papers', path: '/teacher/resources', requiresVerification: true },
   { icon: '💬', title: 'Messages', description: 'Communicate with students and parents', path: '/messages', requiresVerification: true },
-  { icon: '📅', title: 'Schedule', description: 'View and manage your teaching schedule', path: '/teacher/schedule', requiresVerification: false },
+  { icon: '📅', title: 'Schedule', description: 'Your timetable, and the timetables of your classes', path: '/teacher/schedule', requiresVerification: false },
   { icon: '⚙️', title: 'Contact Admin', description: 'Get help from Montemy support', path: '/teacher/contact-admin', requiresVerification: false },
 ]
 
