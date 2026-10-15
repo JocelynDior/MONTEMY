@@ -496,14 +496,14 @@ async function buildStudentOverview(user, student) {
     const names = await teacherNamesByClass([cls.id])
     classInfo = { ...shapeClass(cls), teacherName: names[cls.id] || null }
     const { data } = await supabase
-      .from('assignments').select('id, class_id, title, description, due_date')
+      .from('assignments').select('id, class_id, title, description, due_date, subject')
       .eq('class_id', cls.id).order('due_date', { ascending: true })
     assignments = data || []
   }
 
   // submissions.student_id references users.id
   const { data: subRows } = await supabase
-    .from('submissions').select('id, assignment_id, grade, feedback, status, is_late, submitted_at')
+    .from('submissions').select('id, assignment_id, grade, feedback, status, is_late, submitted_at, graded_at')
     .eq('student_id', user.id)
 
   // Keep only the latest submission per assignment
@@ -517,7 +517,7 @@ async function buildStudentOverview(user, student) {
   const known = Object.fromEntries(assignments.map(a => [a.id, a]))
   const extraIds = Object.keys(latest).filter(id => !known[id])
   if (extraIds.length) {
-    const { data: extra } = await supabase.from('assignments').select('id, title, due_date').in('id', extraIds)
+    const { data: extra } = await supabase.from('assignments').select('id, title, due_date, subject').in('id', extraIds)
     for (const a of extra || []) known[a.id] = a
   }
 
@@ -540,6 +540,7 @@ async function buildStudentOverview(user, student) {
       grade: hasGrade(sub) ? Number(sub.grade) : null,
       feedback: sub?.feedback || null,
       isLate: !!sub?.is_late,
+      subject: a.subject || 'General',
     }
   })
 
@@ -550,7 +551,8 @@ async function buildStudentOverview(user, student) {
       title: known[sub.assignment_id]?.title || 'Assignment',
       grade: Number(sub.grade),
       feedback: sub.feedback || null,
-      date: sub.submitted_at,
+      subject: known[sub.assignment_id]?.subject || 'General',
+      date: sub.graded_at || sub.submitted_at,
     }))
     .sort((a, b) => new Date(a.date) - new Date(b.date))
 
@@ -728,7 +730,9 @@ function cleanAssignmentInput(body) {
     if (Number.isNaN(d.getTime())) return { error: 'That due date is not valid.' }
     dueDate = d.toISOString()
   }
-  return { title, description, dueDate }
+  const subject = typeof body.subject === 'string' ? body.subject.trim().replace(/\s+/g, ' ') : ''
+  if (subject.length > 60) return { error: 'The subject is too long (max 60 characters).' }
+  return { title, description, dueDate, subject: subject || null }
 }
 
 // ---------- Assignment files & submissions (Phase 20) ----------
@@ -1125,7 +1129,7 @@ app.get('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res
 
     const roster = await studentsByClass(classIds)
     const { data } = await supabase
-      .from('assignments').select('id, class_id, title, description, due_date, attachments').in('class_id', classIds)
+      .from('assignments').select('id, class_id, title, description, due_date, attachments, subject').in('class_id', classIds)
       .eq('created_by', user.id)
     const assignments = data || []
     const stats = await submissionStats(assignments, roster)
@@ -1135,6 +1139,7 @@ app.get('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, res
       id: a.id, classId: a.class_id, className: className[a.class_id],
       title: a.title, description: a.description || '', dueDate: a.due_date,
       attachments: normAttachments(a.attachments),
+      subject: a.subject || null,
       studentCount: roster[a.class_id].length, ...stats[a.id],
     })).sort((a, b) => {
       if (!a.dueDate) return 1
@@ -1167,7 +1172,7 @@ app.post('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, re
 
     const { data, error } = await supabase.from('assignments').insert({
       class_id: cls.id, title: input.title, description: input.description,
-      due_date: input.dueDate, created_by: user.id, attachments: files.attachments,
+      due_date: input.dueDate, created_by: user.id, attachments: files.attachments, subject: input.subject,
     }).select('id').single()
     if (error) {
       await removeAssignmentFiles(files.added.map(f => f.path))
@@ -1205,7 +1210,7 @@ app.put('/api/teacher/assignments/:id', verifyToken, teacherLimiter, async (req,
     if (files.error) return res.status(400).json({ error: files.error })
 
     const { error } = await supabase.from('assignments')
-      .update({ title: input.title, description: input.description, due_date: input.dueDate, attachments: files.attachments })
+      .update({ title: input.title, description: input.description, due_date: input.dueDate, attachments: files.attachments, subject: input.subject })
       .eq('id', owned.assignment.id)
     if (error) {
       await removeAssignmentFiles(files.added.map(f => f.path))
@@ -1303,7 +1308,7 @@ app.put('/api/teacher/assignments/:id/grade', verifyToken, teacherLimiter, async
     const note = typeof feedback === 'string' ? feedback.trim().slice(0, 2000) : ''
 
     const { data: existing } = await supabase
-      .from('submissions').select('id').eq('assignment_id', owned.assignment.id).eq('student_id', studentId).maybeSingle()
+      .from('submissions').select('id, grade, feedback').eq('assignment_id', owned.assignment.id).eq('student_id', studentId).maybeSingle()
 
     const write = (extra) => existing
       ? supabase.from('submissions').update({ grade: g, feedback: note || null, ...extra }).eq('id', existing.id)
@@ -1316,7 +1321,25 @@ app.put('/api/teacher/assignments/:id/grade', verifyToken, teacherLimiter, async
     // If the status column only allows certain values, save the grade without it
     if (error && error.code === '23514') ({ error } = await write({}))
     if (error) throw error
-    await notifyUser(studentId, `Your grade for "${owned.assignment.title}" has been posted: ${g}/100.`, 'success', '/student/academics')
+
+    // Keep an audit trail: only record (and notify) when the grade or feedback actually changed
+    const wasGraded = !!existing && hasNumericGrade(existing)
+    const changed = !wasGraded || Number(existing.grade) !== g || (existing.feedback || '') !== note
+    if (changed) {
+      let submissionId = existing?.id
+      if (!submissionId) {
+        const { data: created } = await supabase.from('submissions').select('id')
+          .eq('assignment_id', owned.assignment.id).eq('student_id', studentId).maybeSingle()
+        submissionId = created?.id
+      }
+      await recordGradeChange({
+        submissionId, assignmentId: owned.assignment.id, studentId, changedBy: user.id,
+        action: wasGraded ? 'regraded' : 'graded',
+        oldGrade: wasGraded ? Number(existing.grade) : null, newGrade: g,
+        oldFeedback: existing?.feedback, newFeedback: note,
+      })
+      await notifyUser(studentId, `Your grade for "${owned.assignment.title}" has been posted: ${g}/100.`, 'success', '/student/academics')
+    }
     res.json({ success: true })
   } catch (err) {
     console.error('Grade error:', err)
@@ -1396,18 +1419,191 @@ app.post('/api/teacher/assignments/:id/reopen', verifyToken, teacherLimiter, asy
     const studentId = req.body?.studentId
     if (!isUuid(studentId)) return res.status(400).json({ error: 'Choose a student.' })
     const { data: sub } = await supabase.from('submissions')
-      .select('id, status').eq('assignment_id', owned.assignment.id).eq('student_id', studentId).maybeSingle()
+      .select('id, status, grade, feedback').eq('assignment_id', owned.assignment.id).eq('student_id', studentId).maybeSingle()
     if (!sub) return res.status(404).json({ error: 'This student has not handed anything in yet.' })
     if (sub.status === 'reopened') return res.status(409).json({ error: 'This submission is already open for revision.' })
 
     const { error } = await supabase.from('submissions')
       .update({ status: 'reopened', grade: null, graded_at: null, reopened_at: new Date().toISOString() }).eq('id', sub.id)
     if (error) throw error
+    await recordGradeChange({
+      submissionId: sub.id, assignmentId: owned.assignment.id, studentId, changedBy: user.id, action: 'reopened',
+      oldGrade: hasNumericGrade(sub) ? Number(sub.grade) : null, newGrade: null, oldFeedback: sub.feedback, newFeedback: sub.feedback,
+    })
     await notifyUser(studentId, `Your teacher has reopened "${owned.assignment.title}" so you can revise and hand it in again.`, 'warning', `/student/assignments/${owned.assignment.id}`)
     res.json({ success: true })
   } catch (err) {
     console.error('Reopen error:', err)
     res.status(500).json({ error: 'Could not reopen the submission. Please try again.' })
+  }
+})
+
+// ---------- Grade book & audit trail (Phase 21) ----------
+const subjectOf = (s) => s || 'General'
+const meanOf = (list) => (list.length ? round1(list.reduce((t, x) => t + x, 0) / list.length) : null)
+
+// Grade changes are only ever added to grade_history, never edited or deleted (the database enforces this).
+// A failure here is logged but never blocks the grade itself.
+async function recordGradeChange({ submissionId, assignmentId, studentId, changedBy, action, oldGrade, newGrade, oldFeedback, newFeedback }) {
+  const { error } = await supabase.from('grade_history').insert({
+    submission_id: submissionId, assignment_id: assignmentId, student_id: studentId, changed_by: changedBy, action,
+    old_grade: oldGrade ?? null, new_grade: newGrade ?? null, old_feedback: oldFeedback || null, new_feedback: newFeedback || null,
+  })
+  if (error) console.error('Grade history insert failed:', error.message)
+}
+
+async function teacherThreshold(userId) {
+  const { data } = await supabase.from('teachers').select('risk_threshold').eq('user_id', userId).maybeSingle()
+  const n = Number(data?.risk_threshold)
+  return Number.isFinite(n) && n >= 1 && n <= 100 ? n : DEFAULT_RISK_THRESHOLD
+}
+
+// Everything the grade book needs for one of the teacher's classes, or null when it isn't theirs
+async function buildGradebook(user, classId) {
+  if (!isUuid(classId) || !(await teacherTeaches(user.id, classId))) return null
+  const { data: clsRow } = await supabase.from('classes').select('id, name, grade').eq('id', classId).maybeSingle()
+  if (!clsRow) return null
+
+  const roster = (await studentsByClass([clsRow.id]))[clsRow.id] || []
+  const { data: assignmentRows, error } = await supabase.from('assignments')
+    .select('id, title, subject, due_date, created_at').eq('class_id', clsRow.id).eq('created_by', user.id)
+    .order('due_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
+  if (error) throw error
+  const assignments = assignmentRows || []
+
+  const subs = await fetchIn('submissions', 'id, assignment_id, student_id, grade, feedback, status, is_late', 'assignment_id', assignments.map(a => a.id))
+  const subjectByAssignment = Object.fromEntries(assignments.map(a => [a.id, subjectOf(a.subject)]))
+  const rosterIds = new Set(roster.map(s => s.id))
+
+  const cellsByStudent = {}
+  for (const sub of subs) {
+    if (!rosterIds.has(sub.student_id)) continue
+    ;(cellsByStudent[sub.student_id] ||= {})[sub.assignment_id] = {
+      submissionId: sub.id,
+      grade: hasNumericGrade(sub) ? Number(sub.grade) : null,
+      feedback: sub.feedback || '',
+      status: submissionLabel(sub),
+      isLate: !!sub.is_late,
+    }
+  }
+
+  const subjects = [...new Set(assignments.map(a => subjectOf(a.subject)))].sort((a, b) =>
+    a === 'General' ? 1 : b === 'General' ? -1 : a.localeCompare(b))
+
+  const students = roster.map(st => {
+    const cells = cellsByStudent[st.id] || {}
+    const graded = Object.entries(cells).filter(([, c]) => c.grade !== null)
+    const bySubject = {}
+    for (const s of subjects) {
+      bySubject[s] = meanOf(graded.filter(([aid]) => subjectByAssignment[aid] === s).map(([, c]) => c.grade))
+    }
+    return { id: st.id, name: st.name, graded: graded.length, average: meanOf(graded.map(([, c]) => c.grade)), bySubject, cells }
+  }).sort((a, b) => a.name.localeCompare(b.name))
+
+  const assignmentAverages = {}
+  for (const a of assignments) {
+    assignmentAverages[a.id] = meanOf(students.map(s => s.cells[a.id]?.grade).filter(g => g !== null && g !== undefined))
+  }
+
+  return {
+    class: { id: clsRow.id, name: classLabel(clsRow) },
+    threshold: await teacherThreshold(user.id),
+    subjects,
+    assignments: assignments.map(a => ({ id: a.id, title: a.title, subject: subjectOf(a.subject), dueDate: a.due_date })),
+    students,
+    classAverage: meanOf(students.map(s => s.average).filter(a => a !== null)),
+    assignmentAverages,
+  }
+}
+
+app.get('/api/teacher/gradebook', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    const book = await buildGradebook(user, req.query.classId)
+    if (!book) return res.status(404).json({ error: 'Class not found.' })
+    res.json(book)
+  } catch (err) {
+    console.error('Gradebook error:', err)
+    res.status(500).json({ error: 'Could not load the grade book. Please try again.' })
+  }
+})
+
+// Saves the teacher's own "flag students below" level
+app.put('/api/teacher/gradebook/threshold', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    const n = Math.round(Number(req.body?.threshold))
+    if (!Number.isFinite(n) || n < 1 || n > 100) return res.status(400).json({ error: 'Enter a number from 1 to 100.' })
+
+    const { data: updated, error } = await supabase.from('teachers')
+      .update({ risk_threshold: n }).eq('user_id', user.id).select('user_id')
+    if (error) throw error
+    if (!updated?.length) {
+      const { error: insErr } = await supabase.from('teachers').insert({ user_id: user.id, risk_threshold: n })
+      if (insErr) throw insErr
+    }
+    res.json({ success: true, threshold: n })
+  } catch (err) {
+    console.error('Save threshold error:', err)
+    res.status(500).json({ error: 'Could not save that level. Please try again.' })
+  }
+})
+
+// The grade book as CSV, built here so the browser never needs the raw data
+app.get('/api/teacher/gradebook/export', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    const book = await buildGradebook(user, req.query.classId)
+    if (!book) return res.status(404).json({ error: 'Class not found.' })
+
+    const header = ['Student', ...book.assignments.map(a => `${a.title} (${a.subject})`), 'Overall average', ...book.subjects.map(s => `${s} average`)]
+    const lines = [header.map(csvCell).join(',')]
+    for (const s of book.students) {
+      const row = [
+        s.name,
+        ...book.assignments.map(a => {
+          const c = s.cells[a.id]
+          return !c ? '' : c.grade !== null ? c.grade : c.status
+        }),
+        s.average ?? '',
+        ...book.subjects.map(sub => s.bySubject[sub] ?? ''),
+      ]
+      lines.push(row.map(csvCell).join(','))
+    }
+    res.json({ csv: lines.join('\r\n'), count: book.students.length, className: book.class.name })
+  } catch (err) {
+    console.error('Gradebook export error:', err)
+    res.status(500).json({ error: 'Could not export the grade book. Please try again.' })
+  }
+})
+
+// Every change made to one submission's grade, newest first
+app.get('/api/teacher/submissions/:submissionId/history', verifyToken, teacherLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!isUuid(req.params.submissionId)) return res.status(404).json({ error: 'Submission not found.' })
+    const { data: sub } = await supabase.from('submissions').select('id, assignment_id').eq('id', req.params.submissionId).maybeSingle()
+    if (!sub || !(await getOwnedAssignment(user.id, sub.assignment_id))) return res.status(404).json({ error: 'Submission not found.' })
+
+    const { data: rows, error } = await supabase.from('grade_history')
+      .select('id, changed_by, action, old_grade, new_grade, old_feedback, new_feedback, created_at')
+      .eq('submission_id', sub.id).order('created_at', { ascending: false }).limit(100)
+    if (error) throw error
+    const people = await usersById((rows || []).map(r => r.changed_by))
+    res.json({
+      history: (rows || []).map(r => ({
+        id: r.id, action: r.action, changedBy: r.changed_by ? displayName(people[r.changed_by]) : 'System',
+        oldGrade: r.old_grade === null ? null : Number(r.old_grade), newGrade: r.new_grade === null ? null : Number(r.new_grade),
+        oldFeedback: r.old_feedback || '', newFeedback: r.new_feedback || '', createdAt: r.created_at,
+      })),
+    })
+  } catch (err) {
+    console.error('Grade history error:', err)
+    res.status(500).json({ error: 'Could not load the history. Please try again.' })
   }
 })
 
@@ -2087,7 +2283,7 @@ async function computeSchoolStats(orgId, threshold) {
 
   const [studentRows, assignments] = await Promise.all([
     fetchIn('students', 'user_id, class_id', 'class_id', classIds),
-    fetchIn('assignments', 'id, class_id', 'class_id', classIds),
+    fetchIn('assignments', 'id, class_id, subject', 'class_id', classIds),
   ])
   const subs = await fetchIn('submissions', 'assignment_id, student_id, grade', 'assignment_id', assignments.map(a => a.id))
 
@@ -2098,6 +2294,11 @@ async function computeSchoolStats(orgId, threshold) {
   for (const r of studentRows) if (perClass[r.class_id]) perClass[r.class_id].students += 1
   for (const a of assignments) if (perClass[a.class_id]) perClass[a.class_id].assignments += 1
 
+  const assignmentSubject = Object.fromEntries(assignments.map(a => [a.id, subjectOf(a.subject)]))
+  const bySubject = {}
+  const DIST_LABELS = ['0-39', '40-49', '50-59', '60-69', '70-79', '80-89', '90-100']
+  const distribution = DIST_LABELS.map(label => ({ label, count: 0 }))
+
   const perStudent = {}
   let totalSum = 0
   let totalGraded = 0
@@ -2106,6 +2307,10 @@ async function computeSchoolStats(orgId, threshold) {
     if (!classId || studentClass[sub.student_id] !== classId) continue
     if (!hasNumericGrade(sub)) continue
     const g = Number(sub.grade)
+    distribution[g < 40 ? 0 : g >= 90 ? 6 : Math.floor(g / 10) - 3].count += 1
+    const sj = (bySubject[assignmentSubject[sub.assignment_id]] ||= { graded: 0, sum: 0 })
+    sj.graded += 1
+    sj.sum += g
     perClass[classId].graded += 1
     perClass[classId].sum += g
     const st = (perStudent[sub.student_id] ||= { classId, sum: 0, count: 0 })
@@ -2164,6 +2369,10 @@ async function computeSchoolStats(orgId, threshold) {
     gradedCount: totalGraded,
     classes,
     grades,
+    distribution,
+    subjects: Object.entries(bySubject)
+      .map(([subject, v]) => ({ subject, graded: v.graded, average: round1(v.sum / v.graded) }))
+      .sort((a, b) => (a.subject === 'General' ? 1 : b.subject === 'General' ? -1 : a.subject.localeCompare(b.subject))),
     atRisk,
     atRiskTotal: atRiskRaw.length,
   }
