@@ -42,6 +42,7 @@ import AdminClasses from './pages/admin/AdminClasses'
 import Messages from './pages/shared/Messages'
 import AdminOrgs from './pages/admin/AdminOrgs'
 import AdminOrgDetail from './pages/admin/AdminOrgDetail'
+import SchedulePage from './pages/timetable/SchedulePage'
 
 // Signed in AND the right role
 const guard = (role, element) => (
@@ -76,6 +77,7 @@ export default function App() {
           <Route path="/student/dashboard" element={guard('student', <StudentDashboard />)} />
           <Route path="/student/academics" element={guard('student', <StudentAcademics />)} />
           <Route path="/student/assignments/:id" element={guard('student', <StudentAssignment />)} />
+          <Route path="/student/schedule" element={guard('student', <SchedulePage backPath="/student/dashboard" />)} />
           <Route path="/student/resources" element={guard('student', <StudentResources />)} />
           <Route path="/student/ai-tutor" element={guard('student', <StudentAiTutor />)} />
 
@@ -84,6 +86,7 @@ export default function App() {
           <Route path="/teacher/classes" element={guard('teacher', <TeacherClasses />)} />
           <Route path="/teacher/assignments" element={guard('teacher', <TeacherAssignments />)} />
           <Route path="/teacher/progress" element={guard('teacher', <TeacherProgress />)} />
+          <Route path="/teacher/schedule" element={guard('teacher', <SchedulePage backPath="/teacher/dashboard" />)} />
           <Route path="/teacher/resources" element={guard('teacher', <TeacherResources />)} />
 
           {/* Parent */}
@@ -94,6 +97,7 @@ export default function App() {
           <Route path="/principal/dashboard" element={guard('principal', <PrincipalDashboard />)} />
           <Route path="/principal/events" element={guard('principal', <PrincipalEvents />)} />
           <Route path="/principal/stats" element={guard('principal', <PrincipalStats />)} />
+          <Route path="/principal/timetable" element={guard('principal', <SchedulePage backPath="/principal/dashboard" />)} />
           <Route path="/principal/staff" element={guard('principal', <PrincipalStaff />)} />
 
           {/* Tutor */}
@@ -103,6 +107,7 @@ export default function App() {
 
           {/* School Member */}
           <Route path="/schoolmember/dashboard" element={guard('schoolmember', <SchoolMemberDashboard />)} />
+          <Route path="/schoolmember/schedules" element={guard('schoolmember', <SchedulePage backPath="/schoolmember/dashboard" />)} />
 
           {/* Admin */}
           <Route path="/admin/dashboard" element={guard('admin', <AdminDashboard />)} />
