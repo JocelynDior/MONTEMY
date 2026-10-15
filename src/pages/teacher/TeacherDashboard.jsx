@@ -8,7 +8,7 @@ import { glassCard, glassBtn, C } from '../../styles/glass'
 const cards = [
   { icon: '🏫', title: 'My Classes', description: 'Manage your classes and student rosters', path: '/teacher/classes', requiresVerification: true },
   { icon: '📝', title: 'Assignments', description: 'Create and manage homework assignments', path: '/teacher/assignments', requiresVerification: true },
-  { icon: '📊', title: 'Student Progress', description: 'Track and review student performance', path: '/teacher/progress', requiresVerification: true },
+  { icon: '📊', title: 'Grade Book', description: 'Grades, averages and students at risk', path: '/teacher/progress', requiresVerification: true },
   { icon: '📚', title: 'Resources', description: 'Upload notes, worksheets and past papers', path: '/teacher/resources', requiresVerification: true },
   { icon: '💬', title: 'Messages', description: 'Communicate with students and parents', path: '/messages', requiresVerification: true },
   { icon: '📅', title: 'Schedule', description: 'View and manage your teaching schedule', path: '/teacher/schedule', requiresVerification: false },
