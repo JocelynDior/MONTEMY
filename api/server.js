@@ -4292,6 +4292,506 @@ app.post('/api/admin/notifications/broadcast', verifyToken, requireAdmin, broadc
   }
 })
 
+// ---------- Timetable / Schedule builder (Phase 22) ----------
+// A timetable belongs to one school. A lesson ("slot") is a class on a weekday in a period; the bell
+// times of the periods are the school's own (timetable_periods), with sensible defaults until the
+// principal saves them. Principals build any lesson in their school; teachers build lessons for the
+// classes they teach (and only as themselves). Students see their class, staff can look up any class
+// or teacher in the school. Conflicts (a teacher or a room in two places) are refused on save.
+const timetableLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+const TT_ROLES = ['student', 'teacher', 'principal', 'schoolmember']
+const TT_MAX_DAY = 6          // 1 = Monday ... 6 = Saturday
+const TT_MAX_PERIODS = 12
+const TT_TERM_KINDS = ['term', 'holiday']
+const TT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+const TT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const TT_DEFAULT_PERIODS = [
+  { period: 1, label: 'Period 1', start: '08:00', end: '08:45', isBreak: false },
+  { period: 2, label: 'Period 2', start: '08:45', end: '09:30', isBreak: false },
+  { period: 3, label: 'Period 3', start: '09:30', end: '10:15', isBreak: false },
+  { period: 4, label: 'Break', start: '10:15', end: '10:45', isBreak: true },
+  { period: 5, label: 'Period 5', start: '10:45', end: '11:30', isBreak: false },
+  { period: 6, label: 'Period 6', start: '11:30', end: '12:15', isBreak: false },
+  { period: 7, label: 'Period 7', start: '12:15', end: '13:00', isBreak: false },
+  { period: 8, label: 'Period 8', start: '13:00', end: '13:45', isBreak: false },
+]
+
+// The signed-in user if their role uses timetables, otherwise a response is sent and null returned
+async function timetableUser(req, res) {
+  const { data: user, error } = await supabase.from('users')
+    .select('id, name, role, org_id, is_verified, is_suspended').eq('id', req.user.id).maybeSingle()
+  if (error) { res.status(500).json({ error: 'Could not load your account.' }); return null }
+  if (!user || user.is_suspended) { res.status(403).json({ error: 'Account not available.' }); return null }
+  if (!TT_ROLES.includes(user.role)) { res.status(403).json({ error: 'Timetables are not available for your account type.' }); return null }
+  if (!user.org_id) { res.status(400).json({ error: 'Your account is not linked to a school yet.' }); return null }
+  return user
+}
+
+const ttTime = (t) => String(t || '').slice(0, 5)
+
+// The school's periods, or the defaults when none have been saved yet
+async function loadTimetablePeriods(orgId) {
+  const { data, error } = await supabase.from('timetable_periods')
+    .select('period, label, start_time, end_time, is_break').eq('org_id', orgId).order('period')
+  if (error) throw error
+  if (!data || !data.length) return { periods: TT_DEFAULT_PERIODS, isDefault: true }
+  return {
+    isDefault: false,
+    periods: data.map(p => ({ period: p.period, label: p.label || `Period ${p.period}`, start: ttTime(p.start_time), end: ttTime(p.end_time), isBreak: !!p.is_break })),
+  }
+}
+
+// 'YYYY-MM-DD' that is a real calendar date, else null
+function ttParseDate(s) {
+  if (typeof s !== 'string' || !TT_DATE_RE.test(s)) return null
+  const d = new Date(`${s}T00:00:00Z`)
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s ? null : d
+}
+const ttIso = (d) => d.toISOString().slice(0, 10)
+const ttAddDays = (d, n) => new Date(d.getTime() + n * 86400000)
+function ttMonday(d) {
+  const dow = (d.getUTCDay() + 6) % 7   // Monday = 0
+  return ttAddDays(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), -dow)
+}
+
+const TT_SLOT_COLUMNS = 'id, class_id, day_of_week, period, subject, teacher_id, room'
+
+// Which lessons this user may change (the server checks again on every write)
+function ttCanEditSlot(user, mineClassIds, slot) {
+  if (!user.is_verified) return false
+  if (user.role === 'principal') return true
+  if (user.role === 'teacher') return mineClassIds.has(slot.class_id) && (!slot.teacher_id || slot.teacher_id === user.id)
+  return false
+}
+
+async function ttClassMap(orgId) {
+  const { data } = await supabase.from('classes').select('id, name, grade').eq('org_id', orgId)
+  return Object.fromEntries((data || []).map(c => [c.id, c]))
+}
+
+async function ttTeachers(orgId) {
+  const rows = await fetchAllRows(() => supabase.from('users').select('id, name')
+    .eq('org_id', orgId).eq('role', 'teacher').or('is_suspended.is.null,is_suspended.eq.false').order('name').order('id'))
+  return rows.map(r => ({ id: r.id, name: r.name || 'Teacher' }))
+}
+
+// What the page needs before it can draw: bell times, which classes and teachers exist, what the user may do
+app.get('/api/timetable/meta', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await timetableUser(req, res)
+    if (!user) return
+    const [{ periods, isDefault }, classMap] = await Promise.all([loadTimetablePeriods(user.org_id), ttClassMap(user.org_id)])
+
+    let myClassId = null
+    let mineIds = []
+    if (user.role === 'student') {
+      const { data: st } = await supabase.from('students').select('class_id').eq('user_id', user.id).maybeSingle()
+      myClassId = st?.class_id && classMap[st.class_id] ? st.class_id : null
+    } else if (user.role === 'teacher') {
+      mineIds = (await getTeacherClasses(user.id)).map(c => c.id)
+    }
+
+    const visible = user.role === 'student'
+      ? (myClassId ? [classMap[myClassId]] : [])
+      : Object.values(classMap)
+    const classes = sortClasses(visible.map(shapeClass)).map(c => ({ ...c, mine: mineIds.includes(c.id) }))
+
+    res.json({
+      role: user.role,
+      canEdit: user.is_verified && (user.role === 'principal' || user.role === 'teacher'),
+      canManageSchool: user.is_verified && user.role === 'principal',
+      isVerified: !!user.is_verified,
+      userId: user.id,
+      userName: user.name || '',
+      periods,
+      periodsAreDefault: isDefault,
+      classes,
+      myClassId,
+      teachers: user.role === 'student' ? [] : await ttTeachers(user.org_id),
+      maxDay: TT_MAX_DAY,
+    })
+  } catch (err) {
+    console.error('Timetable meta error:', err)
+    res.status(500).json({ error: 'Could not load the timetable. Please try again.' })
+  }
+})
+
+// One week of one class or one teacher: lessons, term dates and holidays, school events
+app.get('/api/timetable', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await timetableUser(req, res)
+    if (!user) return
+
+    const start = ttMonday(ttParseDate(req.query.weekStart) || new Date())
+    const end = ttAddDays(start, 6)
+
+    let classId = null
+    let teacherId = null
+    if (user.role === 'student') {
+      const { data: st } = await supabase.from('students').select('class_id').eq('user_id', user.id).maybeSingle()
+      classId = st?.class_id || null
+    } else if (isUuid(req.query.classId)) {
+      classId = req.query.classId
+    } else if (isUuid(req.query.teacherId)) {
+      teacherId = req.query.teacherId
+    } else if (user.role === 'teacher') {
+      teacherId = user.id
+    }
+
+    const classMap = await ttClassMap(user.org_id)
+    if (classId && !classMap[classId]) classId = null
+    if (teacherId) {
+      const { data: t } = await supabase.from('users').select('id, name, role, org_id').eq('id', teacherId).maybeSingle()
+      if (!t || t.role !== 'teacher' || t.org_id !== user.org_id) return res.status(404).json({ error: 'Teacher not found.' })
+    }
+
+    let slots = []
+    if (classId || teacherId) {
+      let q = supabase.from('timetable_slots').select(TT_SLOT_COLUMNS).eq('org_id', user.org_id)
+      q = classId ? q.eq('class_id', classId) : q.eq('teacher_id', teacherId)
+      const { data, error } = await q.order('day_of_week').order('period')
+      if (error) throw error
+      slots = data || []
+    }
+
+    const mineIds = new Set(user.role === 'teacher' ? (await getTeacherClasses(user.id)).map(c => c.id) : [])
+    const teacherNames = {}
+    const tIds = [...new Set(slots.map(s => s.teacher_id).filter(Boolean))]
+    if (tIds.length) {
+      const { data: us } = await supabase.from('users').select('id, name').in('id', tIds)
+      for (const u of us || []) teacherNames[u.id] = u.name || 'Teacher'
+    }
+
+    const dayFrom = ttIso(start)
+    const dayTo = ttIso(end)
+    const [termsRes, eventsRes] = await Promise.all([
+      supabase.from('school_terms').select('id, title, kind, start_date, end_date')
+        .eq('org_id', user.org_id).lte('start_date', dayTo).gte('end_date', dayFrom).order('start_date'),
+      // A day either side so events near midnight still land on the right day in the viewer's time zone
+      supabase.from('events').select('id, title, date, location, type').eq('org_id', user.org_id)
+        .gte('date', ttAddDays(start, -1).toISOString()).lt('date', ttAddDays(end, 2).toISOString()).order('date'),
+    ])
+    if (termsRes.error) throw termsRes.error
+    if (eventsRes.error) throw eventsRes.error
+
+    res.json({
+      weekStart: dayFrom,
+      classId,
+      teacherId,
+      slots: slots.map(s => ({
+        id: s.id,
+        classId: s.class_id,
+        className: classMap[s.class_id] ? classLabel(classMap[s.class_id]) : '',
+        day: s.day_of_week,
+        period: s.period,
+        subject: s.subject,
+        teacherId: s.teacher_id || null,
+        teacherName: s.teacher_id ? (teacherNames[s.teacher_id] || 'Teacher') : '',
+        room: s.room || '',
+        editable: ttCanEditSlot(user, mineIds, s),
+      })),
+      terms: (termsRes.data || []).map(t => ({ id: t.id, title: t.title, kind: t.kind, startDate: t.start_date, endDate: t.end_date })),
+      events: eventsRes.data || [],
+    })
+  } catch (err) {
+    console.error('Timetable week error:', err)
+    res.status(500).json({ error: 'Could not load the timetable. Please try again.' })
+  }
+})
+
+// Checks a lesson against the rest of the school's timetable. Returns a message, or '' when it is fine.
+async function ttConflict({ orgId, day, period, classId, teacherId, room, exceptId }) {
+  const { data, error } = await supabase.from('timetable_slots')
+    .select('id, class_id, teacher_id, room').eq('org_id', orgId).eq('day_of_week', day).eq('period', period)
+  if (error) throw error
+  const others = (data || []).filter(r => r.id !== exceptId)
+  if (!others.length) return ''
+  const classMap = await ttClassMap(orgId)
+  const nameOf = (id) => (classMap[id] ? classLabel(classMap[id]) : 'another class')
+  for (const r of others) {
+    if (r.class_id === classId) return `${nameOf(classId)} already has a lesson in that period.`
+    if (teacherId && r.teacher_id === teacherId) return `That teacher is already teaching ${nameOf(r.class_id)} in that period.`
+    if (room && r.room && r.room.toLowerCase() === room.toLowerCase()) return `Room ${r.room} is already used by ${nameOf(r.class_id)} in that period.`
+  }
+  return ''
+}
+
+// Validates the lesson fields. Returns { error } or { value }.
+function cleanSlotInput(b, periods) {
+  if (!isUuid(b.classId)) return { error: 'Choose a class.' }
+  const day = Number(b.day)
+  if (!Number.isInteger(day) || day < 1 || day > TT_MAX_DAY) return { error: 'Choose a day.' }
+  const period = Number(b.period)
+  const p = periods.find(x => x.period === period)
+  if (!p) return { error: 'That period does not exist at your school.' }
+  if (p.isBreak) return { error: 'You cannot put a lesson in a break.' }
+  const subject = typeof b.subject === 'string' ? b.subject.trim().replace(/\s+/g, ' ') : ''
+  if (!subject) return { error: 'Enter the subject.' }
+  if (subject.length > 60) return { error: 'The subject is too long (max 60 characters).' }
+  const room = typeof b.room === 'string' ? b.room.trim().replace(/\s+/g, ' ') : ''
+  if (room.length > 40) return { error: 'The room is too long (max 40 characters).' }
+  if (b.teacherId && !isUuid(b.teacherId)) return { error: 'That teacher is not valid.' }
+  return { value: { classId: b.classId, day, period, subject, room: room || null, teacherId: b.teacherId || null } }
+}
+
+// Works out who may save this lesson and which teacher it ends up with. Returns { error, status } or { teacherId }.
+async function ttAuthoriseWrite(user, v, existing) {
+  const { data: cls } = await supabase.from('classes').select('id, org_id').eq('id', v.classId).maybeSingle()
+  if (!cls || cls.org_id !== user.org_id) return { status: 404, error: 'Class not found.' }
+  if (existing && existing.class_id !== v.classId) return { status: 400, error: 'A lesson cannot be moved to a different class.' }
+
+  if (user.role === 'principal') {
+    if (v.teacherId) {
+      const t = await teacherForOrg(v.teacherId, user.org_id)
+      if (!t) return { status: 400, error: 'That teacher does not belong to your school.' }
+    }
+    return { teacherId: v.teacherId }
+  }
+  if (user.role === 'teacher') {
+    if (!(await teacherTeaches(user.id, v.classId))) return { status: 403, error: 'You can only change the timetable of classes you teach.' }
+    if (existing && existing.teacher_id && existing.teacher_id !== user.id) return { status: 403, error: 'That lesson belongs to another teacher.' }
+    return { teacherId: user.id }
+  }
+  return { status: 403, error: 'You can view the timetable but not change it.' }
+}
+
+app.post('/api/timetable/slots', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await timetableUser(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    const { periods } = await loadTimetablePeriods(user.org_id)
+    const input = cleanSlotInput(req.body || {}, periods)
+    if (input.error) return res.status(400).json({ error: input.error })
+    const v = input.value
+
+    const auth = await ttAuthoriseWrite(user, v, null)
+    if (auth.error) return res.status(auth.status).json({ error: auth.error })
+
+    const clash = await ttConflict({ orgId: user.org_id, day: v.day, period: v.period, classId: v.classId, teacherId: auth.teacherId, room: v.room })
+    if (clash) return res.status(409).json({ error: clash })
+
+    const { data, error } = await supabase.from('timetable_slots').insert({
+      org_id: user.org_id, class_id: v.classId, day_of_week: v.day, period: v.period, subject: v.subject,
+      teacher_id: auth.teacherId, room: v.room, created_by: user.id,
+    }).select('id').single()
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'That class already has a lesson in that period.' })
+      throw error
+    }
+    res.json({ success: true, id: data.id })
+  } catch (err) {
+    console.error('Create timetable slot error:', err)
+    res.status(500).json({ error: 'Could not save the lesson. Please try again.' })
+  }
+})
+
+// Edit a lesson, or move it (drag and drop sends the new day and period with the same details)
+app.put('/api/timetable/slots/:id', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await timetableUser(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' })
+
+    const { data: existing } = await supabase.from('timetable_slots')
+      .select('id, org_id, class_id, teacher_id').eq('id', req.params.id).maybeSingle()
+    if (!existing || existing.org_id !== user.org_id) return res.status(404).json({ error: 'Lesson not found.' })
+
+    const { periods } = await loadTimetablePeriods(user.org_id)
+    const input = cleanSlotInput(req.body || {}, periods)
+    if (input.error) return res.status(400).json({ error: input.error })
+    const v = input.value
+
+    const auth = await ttAuthoriseWrite(user, v, existing)
+    if (auth.error) return res.status(auth.status).json({ error: auth.error })
+
+    const clash = await ttConflict({ orgId: user.org_id, day: v.day, period: v.period, classId: v.classId, teacherId: auth.teacherId, room: v.room, exceptId: existing.id })
+    if (clash) return res.status(409).json({ error: clash })
+
+    const { error } = await supabase.from('timetable_slots').update({
+      day_of_week: v.day, period: v.period, subject: v.subject, teacher_id: auth.teacherId, room: v.room, updated_at: new Date().toISOString(),
+    }).eq('id', existing.id).eq('org_id', user.org_id)
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'That class already has a lesson in that period.' })
+      throw error
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Update timetable slot error:', err)
+    res.status(500).json({ error: 'Could not save your changes. Please try again.' })
+  }
+})
+
+app.delete('/api/timetable/slots/:id', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await timetableUser(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' })
+
+    const { data: existing } = await supabase.from('timetable_slots')
+      .select('id, org_id, class_id, teacher_id').eq('id', req.params.id).maybeSingle()
+    if (!existing || existing.org_id !== user.org_id) return res.status(404).json({ error: 'Lesson not found.' })
+
+    if (user.role === 'teacher') {
+      const mine = await teacherTeaches(user.id, existing.class_id)
+      if (!mine || (existing.teacher_id && existing.teacher_id !== user.id)) return res.status(403).json({ error: 'You cannot remove that lesson.' })
+    } else if (user.role !== 'principal') {
+      return res.status(403).json({ error: 'You can view the timetable but not change it.' })
+    }
+
+    const { error } = await supabase.from('timetable_slots').delete().eq('id', existing.id).eq('org_id', user.org_id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Delete timetable slot error:', err)
+    res.status(500).json({ error: 'Could not remove the lesson. Please try again.' })
+  }
+})
+
+// Principal: the school's bell times. Replaces the whole list.
+app.put('/api/principal/timetable/periods', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    const list = req.body?.periods
+    if (!Array.isArray(list) || list.length < 1 || list.length > TT_MAX_PERIODS) {
+      return res.status(400).json({ error: `Add between 1 and ${TT_MAX_PERIODS} periods.` })
+    }
+    const rows = []
+    const seen = new Set()
+    for (const p of list) {
+      const period = Number(p?.period)
+      if (!Number.isInteger(period) || period < 1 || period > TT_MAX_PERIODS) return res.status(400).json({ error: 'A period number is not valid.' })
+      if (seen.has(period)) return res.status(400).json({ error: 'Two periods have the same number.' })
+      seen.add(period)
+      if (!TT_TIME_RE.test(p.start) || !TT_TIME_RE.test(p.end)) return res.status(400).json({ error: `Check the times for period ${period}.` })
+      if (p.end <= p.start) return res.status(400).json({ error: `Period ${period} must end after it starts.` })
+      const label = typeof p.label === 'string' ? p.label.trim().slice(0, 30) : ''
+      rows.push({ org_id: user.org_id, period, label: label || (p.isBreak ? 'Break' : `Period ${period}`), start_time: p.start, end_time: p.end, is_break: !!p.isBreak })
+    }
+    rows.sort((a, b) => a.period - b.period)
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].start_time < rows[i - 1].end_time) return res.status(400).json({ error: `Period ${rows[i].period} starts before period ${rows[i - 1].period} ends.` })
+    }
+
+    // Lessons can't be left in a period that is removed or turned into a break
+    const keep = new Set(rows.filter(r => !r.is_break).map(r => r.period))
+    const { data: used, error: usedErr } = await supabase.from('timetable_slots').select('period').eq('org_id', user.org_id)
+    if (usedErr) throw usedErr
+    const stuck = [...new Set((used || []).map(s => s.period).filter(p => !keep.has(p)))].sort((a, b) => a - b)
+    if (stuck.length) return res.status(409).json({ error: `Move or remove the lessons in period ${stuck.join(', ')} first.` })
+
+    const { error: upErr } = await supabase.from('timetable_periods').upsert(rows, { onConflict: 'org_id,period' })
+    if (upErr) throw upErr
+    const gone = (await supabase.from('timetable_periods').select('period').eq('org_id', user.org_id)).data || []
+    const drop = gone.map(g => g.period).filter(p => !seen.has(p))
+    if (drop.length) {
+      const { error: delErr } = await supabase.from('timetable_periods').delete().eq('org_id', user.org_id).in('period', drop)
+      if (delErr) throw delErr
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Save timetable periods error:', err)
+    res.status(500).json({ error: 'Could not save the periods. Please try again.' })
+  }
+})
+
+// Term dates and holidays: everyone in the school reads, the principal writes
+function cleanTermInput(b) {
+  const title = typeof b.title === 'string' ? b.title.trim().replace(/\s+/g, ' ') : ''
+  if (!title) return { error: 'Give it a title, for example "Term 1".' }
+  if (title.length > 100) return { error: 'The title is too long (max 100 characters).' }
+  const kind = TT_TERM_KINDS.includes(b.kind) ? b.kind : 'term'
+  const s = ttParseDate(b.startDate)
+  const e = ttParseDate(b.endDate)
+  if (!s || !e) return { error: 'Choose a start and end date.' }
+  if (e < s) return { error: 'The end date cannot be before the start date.' }
+  return { value: { title, kind, start_date: ttIso(s), end_date: ttIso(e) } }
+}
+const shapeTerm = (t) => ({ id: t.id, title: t.title, kind: t.kind, startDate: t.start_date, endDate: t.end_date })
+
+app.get('/api/timetable/terms', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await timetableUser(req, res)
+    if (!user) return
+    const { data, error } = await supabase.from('school_terms').select('id, title, kind, start_date, end_date')
+      .eq('org_id', user.org_id).order('start_date', { ascending: false }).limit(200)
+    if (error) throw error
+    res.json({ terms: (data || []).map(shapeTerm) })
+  } catch (err) {
+    console.error('Terms list error:', err)
+    res.status(500).json({ error: 'Could not load the term dates. Please try again.' })
+  }
+})
+
+app.post('/api/principal/timetable/terms', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    const input = cleanTermInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+    const { data, error } = await supabase.from('school_terms')
+      .insert({ ...input.value, org_id: user.org_id, created_by: user.id }).select('id').single()
+    if (error) throw error
+    res.json({ success: true, id: data.id })
+
+    afterReply('Term dates', async () => {
+      const recipients = await orgRecipientIds(user.org_id, { excludeId: user.id })
+      const v = input.value
+      const range = v.start_date === v.end_date ? v.start_date : `${v.start_date} to ${v.end_date}`
+      await notifyMany(recipients, `${v.kind === 'holiday' ? 'Holiday' : 'Term dates'}: ${v.title} (${range}).`, 'info')
+    })
+  } catch (err) {
+    console.error('Create term error:', err)
+    res.status(500).json({ error: 'Could not save the dates. Please try again.' })
+  }
+})
+
+app.put('/api/principal/timetable/terms/:id', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Not found.' })
+    const input = cleanTermInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+    const { data, error } = await supabase.from('school_terms')
+      .update(input.value).eq('id', req.params.id).eq('org_id', user.org_id).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'Not found.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Update term error:', err)
+    res.status(500).json({ error: 'Could not save your changes. Please try again.' })
+  }
+})
+
+app.delete('/api/principal/timetable/terms/:id', verifyToken, timetableLimiter, async (req, res) => {
+  try {
+    const user = await principalOrFail(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Not found.' })
+    const { data, error } = await supabase.from('school_terms').delete().eq('id', req.params.id).eq('org_id', user.org_id).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'Not found.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Delete term error:', err)
+    res.status(500).json({ error: 'Could not remove it. Please try again.' })
+  }
+})
+
 app.listen(PORT, () => {
   console.log(`Montemy API running on port ${PORT}`)
 })
