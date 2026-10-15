@@ -3,6 +3,7 @@ import StudentPage from '../../components/student/StudentPage'
 import { ErrorBox, muted, panel, panelTitle } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
 import { gradeColor } from '../../components/student/studentUtils'
+import { BarChart } from '../../components/charts/charts'
 import { glassInput } from '../../styles/glass'
 
 const th = { textAlign: 'left', padding: '0.5rem 0.75rem', color: 'rgba(255,255,255,0.6)', fontWeight: 600, fontSize: '0.8rem', whiteSpace: 'nowrap' }
@@ -54,6 +55,19 @@ export default function PrincipalStats() {
           </div>
 
           <div style={panel}>
+            <h3 style={panelTitle}>Grade distribution</h3>
+            {data.gradedCount === 0 ? <p style={muted}>No graded work yet.</p> : (
+              <>
+                <BarChart
+                  ariaLabel="Number of graded submissions in each percentage range"
+                  bars={data.distribution.map((d, i) => ({ label: d.label, value: d.count, color: i < 2 ? '#ff8f8f' : i < 4 ? '#ffe08a' : '#7CFC9A' }))}
+                />
+                <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.5rem' }}>Every graded submission at your school, grouped by percentage.</p>
+              </>
+            )}
+          </div>
+
+          <div style={panel}>
             <h3 style={panelTitle}>Performance by class</h3>
             {data.classes.length === 0 ? <p style={muted}>No classes at your school yet.</p> : (
               <div style={{ overflowX: 'auto' }}>
@@ -95,9 +109,29 @@ export default function PrincipalStats() {
                 </table>
               </div>
             )}
-            <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.75rem' }}>
-              A per-subject breakdown needs assignments to be tagged with a subject, which isn't tracked yet.
-            </p>
+          </div>
+
+          <div style={panel}>
+            <h3 style={panelTitle}>Average by subject</h3>
+            {data.subjects.length === 0 ? <p style={muted}>No data yet.</p> : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th}>Subject</th><th style={th}>Graded</th><th style={th}>Average</th></tr></thead>
+                  <tbody>
+                    {data.subjects.map(sj => (
+                      <tr key={sj.subject}>
+                        <td style={td}><strong>{sj.subject}</strong></td>
+                        <td style={td}>{sj.graded}</td>
+                        <td style={td}><Avg value={sj.average} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {data.subjects.some(sj => sj.subject === 'General') && (
+              <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.75rem' }}>"General" is work set before teachers could choose a subject.</p>
+            )}
           </div>
 
           <div style={panel}>
