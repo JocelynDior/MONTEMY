@@ -4,6 +4,7 @@ import StudentPage from '../../components/student/StudentPage'
 import StudentProfileForm from '../../components/student/StudentProfileForm'
 import { useStudentOverview } from '../../hooks/useStudentOverview'
 import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
+import { LineChart } from '../../components/charts/charts'
 import { glassCard, glassBtn, C } from '../../styles/glass'
 
 const TABS = ['Subjects', 'Schedule', 'Homework', 'Progress']
@@ -115,7 +116,13 @@ function HomeworkTab({ data }) {
 function ProgressTab({ data }) {
   const { graded, average } = data
   if (graded.length === 0) return <Empty>Your grades will appear here once your teachers have marked your work.</Empty>
-  const shown = graded.slice(-12)
+
+  // One chart per subject, oldest grade on the left
+  const bySubject = {}
+  for (const g of graded) (bySubject[g.subject || 'General'] ||= []).push(g)
+  const subjects = Object.keys(bySubject).sort((a, b) => (a === 'General' ? 1 : b === 'General' ? -1 : a.localeCompare(b)))
+  const mean = (list) => Math.round((list.reduce((t, g) => t + g.grade, 0) / list.length) * 10) / 10
+  const short = (iso) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
   return (
     <>
@@ -124,23 +131,26 @@ function ProgressTab({ data }) {
         <div style={{ fontSize: '2.4rem', fontWeight: 700, color: gradeColor(average) }}>{average}%</div>
       </div>
 
-      <div style={panel}>
-        <h3 style={{ color: C.turquoise, marginBottom: '1rem', fontSize: '1.05rem' }}>Grades over time</h3>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.6rem', height: '180px', overflowX: 'auto', paddingBottom: '0.25rem' }}>
-          {shown.map(g => (
-            <div key={g.assignmentId} title={`${g.title}: ${g.grade}%`} style={{ flex: '0 0 44px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
-              <div style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>{g.grade}</div>
-              <div style={{ width: '100%', height: `${Math.max(2, Math.min(100, g.grade)) * 1.3}px`, background: gradeColor(g.grade), borderRadius: '6px 6px 0 0', opacity: 0.85 }} />
+      {subjects.map(sub => {
+        const list = bySubject[sub]
+        return (
+          <div key={sub} style={panel}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <h3 style={{ color: C.turquoise, fontSize: '1.05rem' }}>{sub}</h3>
+              <span style={muted}>Average <strong style={{ color: gradeColor(mean(list)) }}>{mean(list)}%</strong> · {list.length} graded</span>
             </div>
-          ))}
-        </div>
-        <div style={{ ...muted, fontSize: '0.75rem', marginTop: '0.5rem' }}>Oldest on the left. Showing your last {shown.length}.</div>
-      </div>
+            <LineChart
+              ariaLabel={`${sub} grades over time, average ${mean(list)} percent`}
+              points={list.map(g => ({ label: short(g.date), value: g.grade, title: `${g.title}: ${g.grade}%` }))}
+            />
+          </div>
+        )
+      })}
 
       {[...graded].reverse().map(g => (
         <div key={g.assignmentId} style={panel}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-            <span style={{ fontWeight: 600 }}>{g.title}</span>
+            <span style={{ fontWeight: 600 }}>{g.title}<span style={{ ...muted, fontSize: '0.8rem' }}> · {g.subject || 'General'}</span></span>
             <strong style={{ color: gradeColor(g.grade) }}>{g.grade}%</strong>
           </div>
           {g.feedback && <div style={{ ...muted, marginTop: '0.4rem' }}>{g.feedback}</div>}
