@@ -10,7 +10,7 @@ import { glassCard, glassBtn, C } from '../../styles/glass'
 
 const cards = [
   { icon: '📚', title: 'My Subjects', description: 'View your subjects and learning materials', path: '/student/academics', requiresVerification: true },
-  { icon: '📅', title: 'Schedule', description: 'View your class timetable and schedule', path: '/student/academics', requiresVerification: true },
+  { icon: '📅', title: 'Schedule', description: 'View your class timetable and schedule', path: '/student/schedule', requiresVerification: true },
   { icon: '📝', title: 'Homework', description: 'View your homework assignments', path: '/student/academics', requiresVerification: true },
   { icon: '📊', title: 'My Progress', description: 'Track your academic performance and grades', path: '/student/academics', requiresVerification: true },
   { icon: '📖', title: 'Resources', description: 'Access past papers, textbooks and study materials', path: '/student/resources', requiresVerification: false },
