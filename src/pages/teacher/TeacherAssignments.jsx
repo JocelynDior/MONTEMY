@@ -5,6 +5,7 @@ import { apiFetch } from '../../api/apiClient'
 import { dueIn, fmtDate, gradeColor, statusColor } from '../../components/student/studentUtils'
 import { ACCEPT, fmtSize, iconFor } from '../../components/resources/resourceUtils'
 import { openAssignmentFile, uploadAssignmentFile } from '../../components/assignments/assignmentFiles'
+import { SUBJECT_OPTIONS } from '../../config/studentOptions'
 import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
 
 const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
@@ -59,6 +60,7 @@ function AssignmentForm({ classes, assignment, onDone, onCancel }) {
   const [title, setTitle] = useState(assignment?.title || '')
   const [description, setDescription] = useState(assignment?.description || '')
   const [due, setDue] = useState(toLocalInput(assignment?.dueDate))
+  const [subject, setSubject] = useState(assignment?.subject || '')
   const [files, setFiles] = useState(assignment?.attachments || [])
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -85,7 +87,7 @@ function AssignmentForm({ classes, assignment, onDone, onCancel }) {
     setError('')
     setSaving(true)
     try {
-      const body = { classId, title, description, dueDate: due ? new Date(due).toISOString() : null, attachments: files.map(f => ({ path: f.path, name: f.name })) }
+      const body = { classId, title, description, dueDate: due ? new Date(due).toISOString() : null, subject, attachments: files.map(f => ({ path: f.path, name: f.name })) }
       if (editing) await apiFetch(`/api/teacher/assignments/${assignment.id}`, { method: 'PUT', body })
       else await apiFetch('/api/teacher/assignments', { method: 'POST', body })
       onDone()
@@ -105,6 +107,17 @@ function AssignmentForm({ classes, assignment, onDone, onCancel }) {
         <select style={glassInput} value={classId} onChange={e => setClassId(e.target.value)} disabled={editing} required>
           {classes.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}</option>)}
         </select>
+      </div>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={labelStyle} htmlFor="as-subject">Subject</label>
+        <select id="as-subject" style={glassInput} value={subject} onChange={e => setSubject(e.target.value)}>
+          <option value="" style={{ background: '#001F3F' }}>General (no subject)</option>
+          {[...SUBJECT_OPTIONS, ...(subject && !SUBJECT_OPTIONS.includes(subject) ? [subject] : [])].map(sj => (
+            <option key={sj} value={sj} style={{ background: '#001F3F' }}>{sj}</option>
+          ))}
+        </select>
+        <div style={{ ...muted, fontSize: '0.8rem', marginTop: '0.3rem' }}>Grades are averaged and charted per subject.</div>
       </div>
 
       <div style={{ marginBottom: '1rem' }}>
@@ -158,6 +171,18 @@ function SubmissionRow({ row, assignmentId, onSaved }) {
 
   const status = sub ? sub.status : 'Not submitted'
   const [reopening, setReopening] = useState(false)
+  const [history, setHistory] = useState(null) // null = closed, { loading, error, list }
+
+  const toggleHistory = async () => {
+    if (history) return setHistory(null)
+    setHistory({ loading: true, error: '', list: [] })
+    try {
+      const r = await apiFetch(`/api/teacher/submissions/${sub.id}/history`)
+      setHistory({ loading: false, error: '', list: r.history })
+    } catch (err) {
+      setHistory({ loading: false, error: err.message || 'Could not load the history.', list: [] })
+    }
+  }
 
   const reopen = async () => {
     if (!window.confirm(`Send ${row.student.name}'s work back for revision? Their grade will be cleared until you grade it again. Your feedback stays so they can see what to fix.`)) return
@@ -228,6 +253,9 @@ function SubmissionRow({ row, assignmentId, onSaved }) {
         <button onClick={save} disabled={saving || grade === ''} style={{ ...smallBtn, opacity: saving || grade === '' ? 0.5 : 1 }}>
           {saving ? 'Saving...' : 'Save grade'}
         </button>
+        {sub && (
+          <button onClick={toggleHistory} style={ghostBtn}>{history ? 'Hide history' : 'Grade history'}</button>
+        )}
         {sub && status !== 'Reopened' && (
           <button onClick={reopen} disabled={reopening || saving} style={{ ...ghostBtn, opacity: reopening ? 0.6 : 1 }}>
             {reopening ? 'Reopening...' : 'Reopen for revision'}
@@ -236,6 +264,26 @@ function SubmissionRow({ row, assignmentId, onSaved }) {
       </div>
       {status === 'Reopened' && <div style={{ ...muted, fontSize: '0.85rem', marginTop: '0.5rem' }}>Sent back to the student. You can grade it again once they hand it in.</div>}
       {msg && <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: msg.ok ? '#7CFC9A' : '#ffb3b3' }}>{msg.text}</div>}
+      {history && (
+        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+          {history.loading && <div style={muted}>Loading...</div>}
+          {history.error && <div role="alert" style={{ color: '#ffb3b3', fontSize: '0.85rem' }}>{history.error}</div>}
+          {!history.loading && !history.error && history.list.length === 0 && <div style={muted}>No changes recorded yet.</div>}
+          {history.list.map(h => (
+            <div key={h.id} style={{ fontSize: '0.85rem', marginBottom: '0.5rem', lineHeight: 1.45 }}>
+              <strong>
+                {h.action === 'graded' ? `Graded ${h.newGrade}%`
+                  : h.action === 'regraded' ? `Changed ${h.oldGrade}% to ${h.newGrade}%`
+                  : `Reopened${h.oldGrade !== null ? ` (was ${h.oldGrade}%)` : ''}`}
+              </strong>
+              <span style={muted}> · {h.changedBy} · {fmtDate(h.createdAt)}</span>
+              {h.action !== 'reopened' && h.newFeedback !== h.oldFeedback && h.newFeedback && (
+                <div style={{ ...muted, fontSize: '0.8rem' }}>Feedback: {h.newFeedback}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -349,7 +397,7 @@ export default function TeacherAssignments() {
             <div>
               <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>{a.title}</div>
               <div style={{ ...muted, fontSize: '0.85rem' }}>
-                {a.className} · {a.dueDate ? `${fmtDate(a.dueDate)} · ${dueIn(a.dueDate)}` : 'No due date'}{a.attachments?.length ? ` · ${a.attachments.length} file${a.attachments.length === 1 ? '' : 's'} attached` : ''}
+                {a.className}{a.subject ? ` · ${a.subject}` : ''} · {a.dueDate ? `${fmtDate(a.dueDate)} · ${dueIn(a.dueDate)}` : 'No due date'}{a.attachments?.length ? ` · ${a.attachments.length} file${a.attachments.length === 1 ? '' : 's'} attached` : ''}
               </div>
             </div>
             <div style={{ textAlign: 'right', fontSize: '0.85rem' }}>
