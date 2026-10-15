@@ -5,6 +5,7 @@ import StudentProfileForm from '../../components/student/StudentProfileForm'
 import { useStudentOverview } from '../../hooks/useStudentOverview'
 import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
 import { LineChart } from '../../components/charts/charts'
+import TimetableBoard from '../../components/timetable/TimetableBoard'
 import { glassCard, glassBtn, C } from '../../styles/glass'
 
 const TABS = ['Subjects', 'Schedule', 'Homework', 'Progress']
@@ -66,9 +67,8 @@ function ScheduleTab({ data }) {
 
   return (
     <>
-      <div style={{ ...panel, ...muted }}>
-        Your weekly class timetable will show here once your school publishes it. Until then, here is what's coming up.
-      </div>
+      <div style={{ marginBottom: '1.5rem' }}><TimetableBoard /></div>
+      <h3 style={{ color: C.turquoise, fontSize: '1.05rem', marginBottom: '0.75rem' }}>Coming up</h3>
       {dated.length === 0 ? <Empty>Nothing coming up yet.</Empty> : dated.map(item => (
         <div key={item.key} style={{ ...panel, display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
           <div>
