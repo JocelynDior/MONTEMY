@@ -9,6 +9,7 @@ import AdminResources from '../../components/admin/AdminResources'
 import MessagesBell from '../../components/layout/MessagesBell'
 import NotificationBell from '../../components/layout/NotificationBell'
 import AdminBroadcast from '../../components/admin/AdminBroadcast'
+import AdminParentTeacher from '../../components/admin/AdminParentTeacher'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -95,7 +96,7 @@ export default function AdminDashboard() {
       <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem 1.5rem' }}>
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources'], ['broadcast', 'Broadcast'], ['events', 'Events']].map(([key, label]) => (
+          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources'], ['broadcast', 'Broadcast'], ['events', 'Events'], ['pt', 'Parent–Teacher']].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               style={{ border: 'none', cursor: 'pointer', padding: '0.6rem 1.4rem', borderRadius: '8px', fontWeight: 600,
                 background: tab === key ? 'rgba(var(--color-primary-rgb),0.85)' : 'rgba(255,255,255,0.08)',
@@ -152,6 +153,8 @@ export default function AdminDashboard() {
           <AdminResources />
         ) : tab === 'broadcast' ? (
           <AdminBroadcast />
+        ) : tab === 'pt' ? (
+          <AdminParentTeacher />
         ) : tab === 'events' ? (
           <div style={{ ...glassCard, padding: '1.25rem' }}>
             <h3 style={{ color: C.turquoise, fontSize: '1.05rem', marginBottom: '0.5rem' }}>Platform-wide events</h3>
