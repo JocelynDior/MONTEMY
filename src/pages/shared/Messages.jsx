@@ -6,6 +6,9 @@ import { ROLE_ROUTES } from '../../supabase/authHelpers'
 import StudentPage from '../../components/student/StudentPage'
 import { panel, muted, smallBtn, ghostBtn, Chip, ErrorBox } from '../../components/parent/parentUi'
 import { glassInput, C } from '../../styles/glass'
+import ClassAnnouncement from '../../components/messages/ClassAnnouncement'
+
+const PT_COLOR = '#ffd166'
 
 const ROLE_LABELS = {
   student: 'Student', teacher: 'Teacher', parent: 'Parent', principal: 'Principal',
@@ -61,6 +64,8 @@ export default function Messages() {
   const [sendError, setSendError] = useState('')
 
   const [picking, setPicking] = useState(false)  // "New chat" panel
+  const [announcing, setAnnouncing] = useState(false)  // teacher: message all parents of a class
+  const [myTeachers, setMyTeachers] = useState([])     // parent: teachers of my children
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('')
   const [contacts, setContacts] = useState([])
@@ -84,6 +89,7 @@ export default function Messages() {
   const openThread = useCallback(async (person) => {
     setActive(person)
     setPicking(false)
+    setAnnouncing(false)
     setThread(null)
     setThreadError('')
     setSendError('')
@@ -92,7 +98,7 @@ export default function Messages() {
       const data = await apiFetch(`/api/messages/thread/${person.id}`)
       if (activeRef.current?.id !== person.id) return // user already opened someone else
       setActive(data.user)
-      setThread({ messages: data.messages, canSend: data.canSend })
+      setThread({ messages: data.messages, canSend: data.canSend, parentTeacher: !!data.parentTeacher })
       loadInbox() // the unread count for this chat is now zero
     } catch (err) {
       if (activeRef.current?.id === person.id) setThreadError(err.message || 'Could not load this conversation.')
@@ -102,6 +108,12 @@ export default function Messages() {
   }, [loadInbox])
 
   useEffect(() => { loadInbox() }, [loadInbox])
+
+  // Parents get their child's teachers as quick contacts
+  useEffect(() => {
+    if (role !== 'parent') return
+    apiFetch('/api/parent/teachers').then(d => setMyTeachers(d.teachers || [])).catch(() => {})
+  }, [role])
 
   // Live updates: new messages to me
   useEffect(() => {
@@ -174,8 +186,8 @@ export default function Messages() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
 
-  const showList = !narrow || !active
-  const showChat = !narrow || !!active
+  const showList = !narrow || (!active && !announcing)
+  const showChat = !narrow || !!active || announcing
   const conversations = inbox?.conversations || []
 
   const personRow = (p, extra) => (
@@ -201,9 +213,14 @@ export default function Messages() {
           <div style={{ ...panel, padding: 0, width: narrow ? '100%' : '340px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '0.9rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
               <strong style={{ color: C.turquoise }}>{picking ? 'New chat' : 'Chats'}</strong>
-              <button style={picking ? ghostBtn : smallBtn} onClick={() => { setPicking(p => !p); setSearch(''); setFilter('') }}>
-                {picking ? 'Back' : '+ New chat'}
-              </button>
+              <span style={{ display: 'flex', gap: '0.4rem' }}>
+                {role === 'teacher' && !picking && (
+                  <button style={ghostBtn} onClick={() => { setAnnouncing(true); setActive(null) }} title="Message all parents of a class">📢 Parents</button>
+                )}
+                <button style={picking ? ghostBtn : smallBtn} onClick={() => { setPicking(p => !p); setSearch(''); setFilter('') }}>
+                  {picking ? 'Back' : '+ New chat'}
+                </button>
+              </span>
             </div>
 
             {picking ? (
@@ -217,6 +234,12 @@ export default function Messages() {
                   </select>
                 </div>
                 <div style={{ overflowY: 'auto', flex: 1 }}>
+                  {role === 'parent' && myTeachers.length > 0 && !search.trim() && !filter && (
+                    <div style={{ borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
+                      <div style={{ ...muted, fontSize: '0.75rem', padding: '0.6rem 1rem 0.2rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Your child's teachers</div>
+                      {myTeachers.map(t => personRow(t, <Chip color={PT_COLOR}>{t.children.join(', ') || 'Teacher'}</Chip>))}
+                    </div>
+                  )}
                   {contactsError ? <p style={{ ...muted, color: '#ffb3b3', padding: '1rem' }}>{contactsError}</p>
                     : contactsLoading ? <p style={{ ...muted, padding: '1rem' }}>Loading...</p>
                     : contacts.length === 0 ? <p style={{ ...muted, padding: '1rem' }}>No one found.</p>
@@ -234,7 +257,7 @@ export default function Messages() {
                       onKeyDown={(e) => { if (e.key === 'Enter') openThread(c.user) }}
                       style={{ padding: '0.8rem 1rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.08)', background: active?.id === c.user.id ? 'rgba(var(--color-primary-rgb),0.15)' : 'transparent' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'baseline' }}>
-                        <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.user.name}</span>
+                        <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.user.name}{c.parentTeacher && <span style={{ marginLeft: '0.4rem' }}><Chip color={PT_COLOR}>Parent–Teacher</Chip></span>}</span>
                         <span style={{ ...muted, fontSize: '0.75rem', flexShrink: 0 }}>{timeLabel(c.lastMessage.createdAt)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', marginTop: '0.2rem' }}>
@@ -253,7 +276,9 @@ export default function Messages() {
         {/* Right: open chat */}
         {showChat && (
           <div style={{ ...panel, padding: 0, flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            {!active ? (
+            {announcing ? (
+              <ClassAnnouncement onClose={() => setAnnouncing(false)} onSent={loadInbox} />
+            ) : !active ? (
               <div style={{ ...muted, margin: 'auto', textAlign: 'center', padding: '2rem' }}>
                 <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>💬</div>
                 Pick a conversation, or start a new chat.
@@ -269,7 +294,13 @@ export default function Messages() {
                       {active.email ? ` · ${active.email}` : ''}
                     </div>
                   </div>
+                  {thread?.parentTeacher && <span style={{ marginLeft: 'auto' }}><Chip color={PT_COLOR}>Parent–Teacher</Chip></span>}
                 </div>
+                {thread?.parentTeacher && (
+                  <p style={{ ...muted, fontSize: '0.75rem', padding: '0.4rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                    Parent–teacher conversations may be reviewed by Montemy admins to keep everyone safe.
+                  </p>
+                )}
 
                 <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                   {threadError ? <ErrorBox message={threadError} onRetry={() => openThread(active)} />
