@@ -39,7 +39,15 @@ export default function DashboardShell({ role, cards = [], children }) {
           {appName}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          {profile?.name && <span style={{ color: 'rgba(255,255,255,0.8)' }}>{profile.name}</span>}
+          {profile?.name && (
+            <button onClick={() => navigate('/settings')} title="Settings and profile" aria-label="Open settings"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', fontFamily: 'inherit', fontSize: 'inherit', padding: 0 }}>
+              {profile.avatar_url
+                ? <img src={profile.avatar_url} alt="" style={{ width: '1.9rem', height: '1.9rem', borderRadius: '50%', objectFit: 'cover' }} />
+                : <span aria-hidden>⚙️</span>}
+              {profile.name}
+            </button>
+          )}
           <NotificationBell />
           {verified && <MessagesBell />}
           <button onClick={handleLogout}
