@@ -1186,7 +1186,7 @@ app.post('/api/teacher/assignments', verifyToken, teacherLimiter, async (req, re
       if (!roster.length) return
       const { data: c } = await supabase.from('classes').select('id, name, grade').eq('id', cls.id).maybeSingle()
       const due = input.dueDate ? ` Due ${new Date(input.dueDate).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}.` : ''
-      await notifyMany(roster.map(st => st.id), `New assignment${c ? ` for ${classLabel(c)}` : ''}: "${input.title}".${due}`, 'info', '/student/academics')
+      await notifyMany(roster.map(st => st.id), `New assignment${c ? ` for ${classLabel(c)}` : ''}: "${input.title}".${due}`, 'info', '/student/academics', 'academic')
     })
   } catch (err) {
     console.error('Create assignment error:', err)
@@ -1338,7 +1338,7 @@ app.put('/api/teacher/assignments/:id/grade', verifyToken, teacherLimiter, async
         oldGrade: wasGraded ? Number(existing.grade) : null, newGrade: g,
         oldFeedback: existing?.feedback, newFeedback: note,
       })
-      await notifyUser(studentId, `Your grade for "${owned.assignment.title}" has been posted: ${g}/100.`, 'success', '/student/academics')
+      await notifyUser(studentId, `Your grade for "${owned.assignment.title}" has been posted: ${g}/100.`, 'success', '/student/academics', 'academic')
     }
     res.json({ success: true })
   } catch (err) {
@@ -1430,7 +1430,7 @@ app.post('/api/teacher/assignments/:id/reopen', verifyToken, teacherLimiter, asy
       submissionId: sub.id, assignmentId: owned.assignment.id, studentId, changedBy: user.id, action: 'reopened',
       oldGrade: hasNumericGrade(sub) ? Number(sub.grade) : null, newGrade: null, oldFeedback: sub.feedback, newFeedback: sub.feedback,
     })
-    await notifyUser(studentId, `Your teacher has reopened "${owned.assignment.title}" so you can revise and hand it in again.`, 'warning', `/student/assignments/${owned.assignment.id}`)
+    await notifyUser(studentId, `Your teacher has reopened "${owned.assignment.title}" so you can revise and hand it in again.`, 'warning', `/student/assignments/${owned.assignment.id}`, 'academic')
     res.json({ success: true })
   } catch (err) {
     console.error('Reopen error:', err)
@@ -1793,15 +1793,30 @@ async function removeChildLink(parentId, studentId) {
 }
 
 // Notifications are a nice-to-have; a failure here never breaks the request
-async function notifyUser(userId, content, type = 'info', link = null) {
+// `category` ('academic' | 'events' | 'messages' | 'tutoring') lets people mute a kind of notification in
+// Settings. Account and admin notices pass no category, so they are always delivered.
+async function mutedUserIds(ids, category) {
+  if (!category || !ids.length) return new Set()
+  try {
+    const rows = await fetchIn('users', 'id, notification_prefs', 'id', ids, ['id'])
+    return new Set(rows.filter(r => r.notification_prefs && r.notification_prefs[category] === false).map(r => r.id))
+  } catch (err) {
+    console.error('Notification preference lookup failed:', err.message)
+    return new Set()
+  }
+}
+
+async function notifyUser(userId, content, type = 'info', link = null, category = null) {
+  if ((await mutedUserIds([userId], category)).has(userId)) return
   const { error } = await supabase.from('notifications').insert({ user_id: userId, type, content, link })
   if (error) console.error('Notification insert failed:', error.message)
 }
 
 // The same message to many people (inserted 500 at a time). Never throws.
-async function notifyMany(userIds, content, type = 'info', link = null) {
+async function notifyMany(userIds, content, type = 'info', link = null, category = null) {
   try {
-    const ids = [...new Set((userIds || []).filter(Boolean))]
+    let ids = [...new Set((userIds || []).filter(Boolean))]
+    if (category) { const muted = await mutedUserIds(ids, category); ids = ids.filter(id => !muted.has(id)) }
     const text = String(content).slice(0, 300)
     for (let i = 0; i < ids.length; i += 500) {
       const rows = ids.slice(i, i + 500).map(id => ({ user_id: id, type, content: text, link }))
@@ -2543,7 +2558,7 @@ app.post('/api/principal/events', verifyToken, principalLimiter, async (req, res
     afterReply('Event', async () => {
       const recipients = await orgRecipientIds(user.org_id, { excludeId: user.id })
       const when = new Date(input.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
-      await notifyMany(recipients, `New event: "${input.title}" on ${when}.`, 'info', '/events')
+      await notifyMany(recipients, `New event: "${input.title}" on ${when}.`, 'info', '/events', 'events')
     })
   } catch (err) {
     console.error('Create event error:', err)
@@ -2862,7 +2877,7 @@ app.post('/api/tutor/sessions', verifyToken, tutorLimiter, async (req, res) => {
       .insert({ ...input.value, tutor_id: user.id, student_id: body.studentId, org_id: user.org_id }).select('id').single()
     if (error) throw error
 
-    await notifyUser(body.studentId, `${user.name || 'Your tutor'} scheduled a tutoring session with you. Check your dashboard for the time.`, 'info', '/student/dashboard')
+    await notifyUser(body.studentId, `${user.name || 'Your tutor'} scheduled a tutoring session with you. Check your dashboard for the time.`, 'info', '/student/dashboard', 'tutoring')
     res.json({ success: true, id: data.id })
   } catch (err) {
     console.error('Create session error:', err)
@@ -2986,7 +3001,7 @@ const USERS_PAGE_SIZE = 50
 const EXPORT_MAX_ROWS = 10000
 const SUSPEND_FOR = '876000h'   // about 100 years: effectively "until an admin lifts it"
 const ORG_TYPES = ['school', 'tutor']
-const USER_LIST_COLUMNS = 'id, email, name, role, org_id, is_verified, is_suspended, created_at'
+const USER_LIST_COLUMNS = 'id, email, name, role, org_id, is_verified, is_suspended, deleted_at, created_at'
 
 const escapeLike = (s) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
 
@@ -3036,6 +3051,7 @@ app.get('/api/admin/users', verifyToken, requireAdmin, async (req, res) => {
         orgName: orgs[u.org_id] || null,
         isVerified: !!u.is_verified,
         isSuspended: !!u.is_suspended,
+        selfDeleted: !!u.deleted_at,
         createdAt: u.created_at,
       })),
       total: count || 0,
@@ -3112,6 +3128,7 @@ app.post('/api/admin/users/:id/action', verifyToken, requireAdmin, async (req, r
     const { error } = await supabase.from('users').update({
       is_suspended: action === 'suspend',
       suspended_at: action === 'suspend' ? new Date().toISOString() : null,
+      ...(action === 'unsuspend' ? { deleted_at: null } : {}),   // also restores an account its owner deleted
     }).eq('id', target.id)
     if (error) throw error
     res.json({ success: true })
@@ -3908,7 +3925,7 @@ app.post('/api/messages', verifyToken, sendMessageLimiter, async (req, res) => {
 
     // A parent writing to a teacher also reaches the teacher's notification bell
     if (kind === 'parent_teacher' && me.role === 'parent') {
-      afterReply('Parent message', () => notifyUser(to, `New message from parent ${me.name || me.username || ''}`.trim(), 'info', '/messages'))
+      afterReply('Parent message', () => notifyUser(to, `New message from parent ${me.name || me.username || ''}`.trim(), 'info', '/messages', 'messages'))
     }
 
     res.json({ message: { id: msg.id, fromMe: true, content: msg.content, read: false, createdAt: msg.created_at } })
@@ -4256,7 +4273,7 @@ app.post('/api/resources', verifyToken, resourcesLimiter, async (req, res) => {
         const rows = await fetchIn('students', 'user_id, grade', 'user_id', studentIds, ['user_id'])
         studentIds = rows.filter(r => String(r.grade) === grade).map(r => r.user_id)
       }
-      await notifyMany(studentIds, `New ${isPastPaper ? 'past paper' : 'study material'}: "${title}" (${subject}).`, 'info', '/student/resources')
+      await notifyMany(studentIds, `New ${isPastPaper ? 'past paper' : 'study material'}: "${title}" (${subject}).`, 'info', '/student/resources', 'academic')
     })
   } catch (err) {
     console.error('Resource save error:', err)
@@ -4939,7 +4956,7 @@ app.post('/api/principal/timetable/terms', verifyToken, timetableLimiter, async 
       const recipients = await orgRecipientIds(user.org_id, { excludeId: user.id })
       const v = input.value
       const range = v.start_date === v.end_date ? v.start_date : `${v.start_date} to ${v.end_date}`
-      await notifyMany(recipients, `${v.kind === 'holiday' ? 'Holiday' : 'Term dates'}: ${v.title} (${range}).`, 'info')
+      await notifyMany(recipients, `${v.kind === 'holiday' ? 'Holiday' : 'Term dates'}: ${v.title} (${range}).`, 'info', null, 'events')
     })
   } catch (err) {
     console.error('Create term error:', err)
@@ -5114,7 +5131,7 @@ app.post('/api/admin/events', verifyToken, eventsLimiter, async (req, res) => {
 
     afterReply('Platform event', async () => {
       const when = new Date(input.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
-      await notifyMany(await allVerifiedUserIds(user.id), `New platform event: "${input.title}" on ${when}.`, 'info', '/events')
+      await notifyMany(await allVerifiedUserIds(user.id), `New platform event: "${input.title}" on ${when}.`, 'info', '/events', 'events')
     })
   } catch (err) {
     console.error('Create platform event error:', err)
@@ -5198,13 +5215,241 @@ app.post('/api/cron/event-reminders', cronLimiter, async (req, res) => {
       ])
       const skip = new Set(declined.map(r => r.user_id))
       const when = new Date(ev.date).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Johannesburg' })
-      await notifyMany(recipients.filter(id => !skip.has(id)), `Reminder: "${ev.title}" is tomorrow at ${when}.`, 'warning', '/events')
+      await notifyMany(recipients.filter(id => !skip.has(id)), `Reminder: "${ev.title}" is tomorrow at ${when}.`, 'warning', '/events', 'events')
       sent += 1
     }
     res.json({ success: true, remindersSent: sent })
   } catch (err) {
     console.error('Event reminders error:', err)
     res.status(500).json({ error: 'Could not send reminders.' })
+  }
+})
+
+// ---------- Settings & profile (Phase 25) ----------
+// Everyone (all roles) manages their own profile here. Nothing accepts a user id from the browser.
+// Email and password changes happen in the browser through Supabase Auth; /api/account keeps users.email in sync.
+const accountLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+const AVATAR_BUCKET = 'avatars'
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const AVATAR_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
+const NOTIFY_CATEGORIES = ['academic', 'events', 'messages', 'tutoring']
+const ACCOUNT_COLUMNS = 'id, name, username, role, org_id, is_verified, bio, avatar_url, notification_prefs, deleted_at'
+
+async function accountUser(req, res) {
+  const { data: user, error } = await supabase.from('users').select(ACCOUNT_COLUMNS).eq('id', req.user.id).maybeSingle()
+  if (error) { console.error('Account load error:', error.message); res.status(500).json({ error: 'Could not load your account.' }); return null }
+  if (!user) { res.status(403).json({ error: 'Account not found.' }); return null }
+  return user
+}
+
+const prefsWithDefaults = (stored) =>
+  Object.fromEntries(NOTIFY_CATEGORIES.map(k => [k, !(stored && stored[k] === false)]))
+
+app.get('/api/account', verifyToken, accountLimiter, async (req, res) => {
+  try {
+    const user = await accountUser(req, res)
+    if (!user) return
+
+    // After an email change is confirmed, Supabase Auth has the new address; copy it across
+    const authEmail = req.user.email || ''
+    if (authEmail) {
+      const { data: row } = await supabase.from('users').select('email').eq('id', user.id).maybeSingle()
+      if (row && row.email !== authEmail) await supabase.from('users').update({ email: authEmail }).eq('id', user.id)
+    }
+
+    let orgName = null
+    if (user.org_id) {
+      const { data: org } = await supabase.from('organizations').select('name').eq('id', user.org_id).maybeSingle()
+      orgName = org?.name || null
+    }
+    let subjectsTaught = []
+    if (user.role === 'teacher') {
+      const { data: t } = await supabase.from('teachers').select('subjects').eq('user_id', user.id).maybeSingle()
+      subjectsTaught = Array.isArray(t?.subjects) ? t.subjects : []
+    }
+
+    res.json({
+      id: user.id,
+      email: authEmail,
+      name: user.name || '',
+      username: user.username || '',
+      role: user.role,
+      orgName,
+      isVerified: !!user.is_verified,
+      bio: user.bio || '',
+      avatarUrl: user.avatar_url || null,
+      notificationPrefs: prefsWithDefaults(user.notification_prefs),
+      subjectsTaught,
+    })
+  } catch (err) {
+    console.error('Account error:', err)
+    res.status(500).json({ error: 'Could not load your settings. Please try again.' })
+  }
+})
+
+app.put('/api/account/profile', verifyToken, accountLimiter, async (req, res) => {
+  try {
+    const user = await accountUser(req, res)
+    if (!user) return
+    const body = req.body || {}
+    const patch = {}
+
+    if (body.name !== undefined) {
+      const name = typeof body.name === 'string' ? body.name.trim().replace(/\s+/g, ' ') : ''
+      if (name.length < 2) return res.status(400).json({ error: 'Please enter your name (at least 2 characters).' })
+      if (name.length > 80) return res.status(400).json({ error: 'That name is too long (max 80 characters).' })
+      patch.name = name
+    }
+    if (body.bio !== undefined) {
+      const bio = typeof body.bio === 'string' ? body.bio.trim() : ''
+      if (bio.length > 500) return res.status(400).json({ error: 'Your bio is too long (max 500 characters).' })
+      patch.bio = bio || null
+    }
+    if (!Object.keys(patch).length && body.subjectsTaught === undefined) return res.status(400).json({ error: 'Nothing to update.' })
+
+    if (Object.keys(patch).length) {
+      const { error } = await supabase.from('users').update(patch).eq('id', user.id)
+      if (error) throw error
+    }
+
+    if (body.subjectsTaught !== undefined) {
+      if (user.role !== 'teacher') return res.status(403).json({ error: 'Only teachers set subjects taught.' })
+      const subjects = cleanSubjects(body.subjectsTaught)
+      const { data: updated, error } = await supabase.from('teachers').update({ subjects }).eq('user_id', user.id).select('user_id')
+      if (error) throw error
+      if (!updated?.length) {
+        const { error: insErr } = await supabase.from('teachers').insert({ user_id: user.id, subjects })
+        if (insErr) throw insErr
+      }
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Account profile error:', err)
+    res.status(500).json({ error: 'Could not save your changes. Please try again.' })
+  }
+})
+
+// ----- Profile photo: same three-step pattern as logos -----
+async function removeAvatarFile(url) {
+  const marker = `/object/public/${AVATAR_BUCKET}/`
+  const i = typeof url === 'string' ? url.indexOf(marker) : -1
+  if (i === -1) return
+  const path = decodeURIComponent(url.slice(i + marker.length).split('?')[0])
+  await supabase.storage.from(AVATAR_BUCKET).remove([path]).catch(() => {})
+}
+
+app.post('/api/account/avatar/upload-url', verifyToken, accountLimiter, async (req, res) => {
+  try {
+    const ext = AVATAR_TYPES[String(req.body?.mimeType || '')]
+    const size = Number(req.body?.size)
+    if (!ext) return res.status(400).json({ error: 'Use a PNG, JPG or WebP image.' })
+    if (!Number.isFinite(size) || size <= 0) return res.status(400).json({ error: 'That file is empty.' })
+    if (size > AVATAR_MAX_BYTES) return res.status(400).json({ error: 'That photo is too big. The limit is 2MB.' })
+
+    const path = `${req.user.id}/${crypto.randomUUID()}.${ext}`
+    const { data, error } = await supabase.storage.from(AVATAR_BUCKET).createSignedUploadUrl(path)
+    if (error) throw error
+    res.json({ path, token: data.token })
+  } catch (err) {
+    console.error('Avatar upload-url error:', err)
+    res.status(500).json({ error: 'Could not start the upload. Please try again.' })
+  }
+})
+
+app.post('/api/account/avatar', verifyToken, accountLimiter, async (req, res) => {
+  let removeOnFail = null
+  try {
+    const user = await accountUser(req, res)
+    if (!user) return
+    const path = String(req.body?.path || '')
+    const fileKey = path.slice(user.id.length + 1)
+    if (!path.startsWith(`${user.id}/`) || !/^[0-9a-f-]{36}\.[a-z]{2,4}$/i.test(fileKey)) {
+      return res.status(400).json({ error: 'That upload is not valid. Please try again.' })
+    }
+
+    removeOnFail = path
+    const { data: found, error: listErr } = await supabase.storage.from(AVATAR_BUCKET).list(user.id, { search: fileKey, limit: 10 })
+    if (listErr) throw listErr
+    const obj = (found || []).find(f => f.name === fileKey)
+    if (!obj) {
+      removeOnFail = null
+      return res.status(400).json({ error: 'We could not find the uploaded photo. Please try again.' })
+    }
+    const size = Number(obj.metadata?.size) || 0
+    if (!AVATAR_TYPES[obj.metadata?.mimetype || ''] || size <= 0 || size > AVATAR_MAX_BYTES) {
+      await supabase.storage.from(AVATAR_BUCKET).remove([path])
+      removeOnFail = null
+      return res.status(400).json({ error: 'That file is not allowed. Use a PNG, JPG or WebP image up to 2MB.' })
+    }
+
+    const { data: pub } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path)
+    const { error } = await supabase.from('users').update({ avatar_url: pub.publicUrl }).eq('id', user.id)
+    if (error) throw error
+    removeOnFail = null
+    if (user.avatar_url) await removeAvatarFile(user.avatar_url)
+    res.json({ success: true, avatarUrl: pub.publicUrl })
+  } catch (err) {
+    console.error('Avatar save error:', err)
+    if (removeOnFail) await supabase.storage.from(AVATAR_BUCKET).remove([removeOnFail]).catch(() => {})
+    res.status(500).json({ error: 'Could not save your photo. Please try again.' })
+  }
+})
+
+app.delete('/api/account/avatar', verifyToken, accountLimiter, async (req, res) => {
+  try {
+    const user = await accountUser(req, res)
+    if (!user) return
+    const { error } = await supabase.from('users').update({ avatar_url: null }).eq('id', user.id)
+    if (error) throw error
+    if (user.avatar_url) await removeAvatarFile(user.avatar_url)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Avatar remove error:', err)
+    res.status(500).json({ error: 'Could not remove your photo. Please try again.' })
+  }
+})
+
+// Body: { academic, events, messages, tutoring } booleans. Account and admin notices are always delivered.
+app.put('/api/account/notification-prefs', verifyToken, accountLimiter, async (req, res) => {
+  try {
+    const user = await accountUser(req, res)
+    if (!user) return
+    const prefs = { ...(user.notification_prefs || {}) }
+    for (const k of NOTIFY_CATEGORIES) {
+      if (typeof req.body?.[k] === 'boolean') prefs[k] = req.body[k]
+    }
+    const { error } = await supabase.from('users').update({ notification_prefs: prefs }).eq('id', user.id)
+    if (error) throw error
+    res.json({ success: true, notificationPrefs: prefsWithDefaults(prefs) })
+  } catch (err) {
+    console.error('Notification prefs error:', err)
+    res.status(500).json({ error: 'Could not save your preferences. Please try again.' })
+  }
+})
+
+// Soft delete: the account is switched off (same mechanism as an admin suspension) and marked deleted_at.
+// Nothing is erased, and an admin can restore it with Unsuspend. Body: { confirm: 'DELETE' }
+app.post('/api/account/delete', verifyToken, accountLimiter, async (req, res) => {
+  try {
+    const user = await accountUser(req, res)
+    if (!user) return
+    if (user.role === 'admin') return res.status(403).json({ error: 'Admin accounts cannot be deleted here.' })
+    if (req.body?.confirm !== 'DELETE') return res.status(400).json({ error: 'Type DELETE to confirm.' })
+
+    const { error: authErr } = await supabase.auth.admin.updateUserById(user.id, { ban_duration: SUSPEND_FOR })
+    if (authErr) throw authErr
+    const now = new Date().toISOString()
+    const { error } = await supabase.from('users').update({ is_suspended: true, suspended_at: now, deleted_at: now }).eq('id', user.id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Account delete error:', err)
+    res.status(500).json({ error: 'Could not delete your account. Please try again.' })
   }
 })
 
