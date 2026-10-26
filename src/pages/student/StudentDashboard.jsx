@@ -15,6 +15,7 @@ const cards = [
   { icon: '📊', title: 'My Progress', description: 'Track your academic performance and grades', path: '/student/academics', requiresVerification: true },
   { icon: '📖', title: 'Resources', description: 'Access past papers, textbooks and study materials', path: '/student/resources', requiresVerification: false },
   { icon: '🤖', title: 'AI Tutor', description: 'Get 24/7 help from your personal AI tutor', path: '/student/ai-tutor', requiresVerification: false },
+  { icon: '🎉', title: 'Events', description: 'School events and RSVP', path: '/events', requiresVerification: false },
   { icon: '💬', title: 'Messages', description: 'Communicate with teachers and classmates', path: '/messages', requiresVerification: true },
   { icon: '⚙️', title: 'Contact Admin', description: 'Get help from Montemy support', path: '/student/contact-admin', requiresVerification: false },
 ]
