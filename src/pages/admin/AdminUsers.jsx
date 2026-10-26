@@ -172,7 +172,7 @@ export default function AdminUsers() {
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.45rem' }}>
                     <Chip color="#8fd3ff">{roleLabel(u.role)}</Chip>
                     <Chip color={u.isVerified ? '#7CFC9A' : '#ffe08a'}>{u.isVerified ? 'Verified' : 'Waiting'}</Chip>
-                    {u.isSuspended && <Chip color="#ff8f8f">Suspended</Chip>}
+                    {u.isSuspended && <Chip color="#ff8f8f">{u.selfDeleted ? 'Deleted by user' : 'Suspended'}</Chip>}
                     <span style={{ ...muted, fontSize: '0.78rem' }}>
                       {u.orgName || 'No organisation'} · joined {new Date(u.createdAt).toLocaleDateString()}
                     </span>
@@ -190,7 +190,7 @@ export default function AdminUsers() {
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                       {!u.isVerified && <button disabled={busyId === u.id} onClick={() => act(u, 'verify', `${u.name || u.email} was verified.`)} style={smallBtn}>Verify</button>}
                       {u.isSuspended
-                        ? <button disabled={busyId === u.id} onClick={() => act(u, 'unsuspend', `${u.name || u.email} can sign in again.`)} style={ghostBtn}>Unsuspend</button>
+                        ? <button disabled={busyId === u.id} onClick={() => act(u, 'unsuspend', `${u.name || u.email} can sign in again.`)} style={ghostBtn}>{u.selfDeleted ? 'Restore' : 'Unsuspend'}</button>
                         : <button disabled={busyId === u.id} onClick={() => act(u, 'suspend', `${u.name || u.email} was suspended.`)} style={ghostBtn}>Suspend</button>}
                       <button onClick={() => setConfirm({ id: u.id })} style={{ ...ghostBtn, color: '#ff8a8a', border: '1px solid rgba(255,80,80,0.5)' }}>Delete</button>
                     </div>
