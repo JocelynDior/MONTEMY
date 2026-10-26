@@ -86,7 +86,7 @@ export default function AdminDashboard() {
               {pendingCount}
             </span>
           )}
-          {profile?.name && <span style={{ color: 'rgba(255,255,255,0.8)' }}>{profile.name}</span>}
+          {profile?.name && <button onClick={() => navigate('/settings')} title="Settings and profile" aria-label="Open settings" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', fontFamily: 'inherit', fontSize: 'inherit', padding: 0 }}>⚙️ {profile.name}</button>}
           <NotificationBell />
           <MessagesBell />
           <button onClick={handleLogout} style={smallBtn}>Logout</button>
