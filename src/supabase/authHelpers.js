@@ -21,11 +21,11 @@ export function homeRouteFor(profile) {
 }
 
 // Reads the signed-in user's profile row from the users table.
-// Returns { role, is_verified, name, org_id } or null if there is no profile.
+// Returns { role, is_verified, name, org_id, avatar_url } or null if there is no profile.
 export async function getProfile(userId) {
   const { data, error } = await supabase
     .from('users')
-    .select('role, is_verified, name, org_id')
+    .select('role, is_verified, name, org_id, avatar_url')
     .eq('id', userId)
     .maybeSingle()
   if (error) {
