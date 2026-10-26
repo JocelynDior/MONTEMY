@@ -3696,6 +3696,12 @@ const sendMessageLimiter = rateLimit({
 
 const MAX_MESSAGE_LENGTH = 4000 // UUID_RE is declared earlier in this file
 
+// Parent <-> teacher messages are flagged (messages.kind) so the inbox can label them and admins can monitor them
+function messageKind(roleA, roleB) {
+  return (roleA === 'parent' && roleB === 'teacher') || (roleA === 'teacher' && roleB === 'parent')
+    ? 'parent_teacher' : 'direct'
+}
+
 // The signed-in user's row, or null (and a response already sent) if they can't use messaging
 async function messagingUser(req, res) {
   const { data: me, error } = await supabase.from('users')
@@ -3808,6 +3814,7 @@ app.get('/api/messages/inbox', verifyToken, messagesLimiter, async (req, res) =>
 
     const conversations = ids.filter(id => others[id]).map(id => ({
       user: shapeChatUser(others[id], me),
+      parentTeacher: messageKind(me.role, others[id].role) === 'parent_teacher',
       ...convos.get(id),
     }))
     res.json({ conversations, totalUnread: await unreadTotal(me.id) })
@@ -3847,6 +3854,7 @@ app.get('/api/messages/thread/:userId', verifyToken, messagesLimiter, async (req
     }))
     res.json({
       user: shapeChatUser(other, me),
+      parentTeacher: messageKind(me.role, other.role) === 'parent_teacher',
       messages,
       canSend: (me.is_verified || me.role === 'admin') && await canMessage(me, other),
     })
@@ -3892,15 +3900,190 @@ app.post('/api/messages', verifyToken, sendMessageLimiter, async (req, res) => {
       return res.status(403).json({ error: 'You can only message people in your own school or organisation.' })
     }
 
+    const kind = messageKind(me.role, other.role)
     const { data: msg, error } = await supabase.from('messages')
-      .insert({ sender_id: me.id, receiver_id: to, content })
+      .insert({ sender_id: me.id, receiver_id: to, content, kind })
       .select('id, content, created_at').single()
     if (error) throw error
+
+    // A parent writing to a teacher also reaches the teacher's notification bell
+    if (kind === 'parent_teacher' && me.role === 'parent') {
+      afterReply('Parent message', () => notifyUser(to, `New message from parent ${me.name || me.username || ''}`.trim(), 'info', '/messages'))
+    }
 
     res.json({ message: { id: msg.id, fromMe: true, content: msg.content, read: false, createdAt: msg.created_at } })
   } catch (err) {
     console.error('Send message failed:', err)
     res.status(500).json({ error: 'Could not send your message.' })
+  }
+})
+
+// ---------- Parent-teacher communication (Phase 24) ----------
+// Parents find their child's teachers (teacher_classes for the child's class_id), teachers can message
+// every parent of one of their classes, and admins can read flagged parent-teacher conversations.
+const parentTeacherLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+
+// The teachers of every linked child, so a parent can start a chat in one tap
+app.get('/api/parent/teachers', verifyToken, parentTeacherLimiter, async (req, res) => {
+  try {
+    const user = await loadUserWithRole(req.user, 'parent')
+    if (!user) return res.status(403).json({ error: 'Parents only' })
+
+    const childIds = await getLinkedChildIds(user.id)
+    if (!childIds.length) return res.json({ teachers: [] })
+
+    const [people, studentRows] = await Promise.all([
+      usersById(childIds),
+      fetchIn('students', 'user_id, class_id', 'user_id', childIds, ['user_id']),
+    ])
+    const classOfChild = Object.fromEntries(studentRows.map(r => [r.user_id, r.class_id]))
+    const classIds = [...new Set(Object.values(classOfChild).filter(Boolean))]
+    if (!classIds.length) return res.json({ teachers: [] })
+
+    const links = await fetchIn('teacher_classes', 'teacher_id, class_id', 'class_id', classIds, ['teacher_id', 'class_id'])
+    const teacherIds = [...new Set(links.map(l => l.teacher_id))]
+    const { data: teacherUsers } = teacherIds.length
+      ? await supabase.from('users').select('id, name, username, org_id, is_suspended').in('id', teacherIds)
+      : { data: [] }
+    const { data: teacherRows } = teacherIds.length
+      ? await supabase.from('teachers').select('user_id, subjects').in('user_id', teacherIds)
+      : { data: [] }
+    const subjectsOf = Object.fromEntries((teacherRows || []).map(t => [t.user_id, Array.isArray(t.subjects) ? t.subjects : []]))
+
+    const byTeacher = {}
+    for (const t of teacherUsers || []) {
+      if (t.is_suspended || (user.org_id && t.org_id !== user.org_id)) continue
+      byTeacher[t.id] = { id: t.id, name: displayName(t), username: t.username || '', subjects: subjectsOf[t.id] || [], children: [] }
+    }
+    for (const l of links) {
+      const entry = byTeacher[l.teacher_id]
+      if (!entry) continue
+      for (const childId of childIds) {
+        if (classOfChild[childId] === l.class_id && people[childId]) {
+          const n = displayName(people[childId])
+          if (!entry.children.includes(n)) entry.children.push(n)
+        }
+      }
+    }
+    res.json({ teachers: Object.values(byTeacher).sort((a, b) => a.name.localeCompare(b.name)) })
+  } catch (err) {
+    console.error('Parent teachers error:', err)
+    res.status(500).json({ error: 'Could not load your child\'s teachers.' })
+  }
+})
+
+// Teacher -> every parent linked to a child in one of the teacher's classes.
+// Each parent gets a normal chat message, so replies land in the teacher's inbox.
+app.post('/api/teacher/classes/:id/message-parents', verifyToken, sendMessageLimiter, async (req, res) => {
+  try {
+    const user = await loadTeacher(req.user)
+    if (!user) return res.status(403).json({ error: 'Teachers only' })
+    if (!requireVerified(user, res)) return
+    const classId = req.params.id
+    if (!isUuid(classId) || !(await teacherTeaches(user.id, classId))) {
+      return res.status(403).json({ error: 'You can only message parents of your own classes.' })
+    }
+    const text = typeof req.body?.content === 'string' ? req.body.content.trim() : ''
+    if (!text) return res.status(400).json({ error: 'Type a message first.' })
+    if (text.length > 1500) return res.status(400).json({ error: 'Message is too long (max 1500 characters).' })
+
+    const { data: cls } = await supabase.from('classes').select('id, name, grade').eq('id', classId).maybeSingle()
+    const label = cls ? classLabel(cls) : 'your class'
+
+    const studentRows = await fetchAllRows(() => supabase.from('students').select('user_id').eq('class_id', classId).order('user_id'))
+    const studentIds = studentRows.map(r => r.user_id).filter(Boolean)
+    if (!studentIds.length) return res.status(400).json({ error: 'There are no students in this class yet.' })
+
+    const parentRows = await fetchAllRows(() => supabase.from('parents').select('user_id').overlaps('child_ids', studentIds).order('user_id'))
+    const parentIds = [...new Set(parentRows.map(r => r.user_id).filter(Boolean))]
+    const { data: parentUsers } = parentIds.length
+      ? await supabase.from('users').select('id, org_id, is_suspended').in('id', parentIds)
+      : { data: [] }
+    const recipients = (parentUsers || []).filter(p => !p.is_suspended && (!user.org_id || p.org_id === user.org_id)).map(p => p.id)
+    if (!recipients.length) return res.status(400).json({ error: 'No parents are linked to students in this class yet.' })
+
+    const content = `📢 Class announcement for ${label}:\n${text}`
+    for (let i = 0; i < recipients.length; i += 500) {
+      const rows = recipients.slice(i, i + 500).map(id => ({ sender_id: user.id, receiver_id: id, content, kind: 'parent_teacher' }))
+      const { error } = await supabase.from('messages').insert(rows)
+      if (error) throw error
+    }
+    res.json({ success: true, sent: recipients.length, className: label })
+  } catch (err) {
+    console.error('Message parents error:', err)
+    res.status(500).json({ error: 'Could not send your message. Please try again.' })
+  }
+})
+
+// ----- Admin: monitor flagged (parent-teacher) conversations -----
+// Read-only. Optional ?orgId= narrows to one organisation. Looks at the latest 1000 flagged messages.
+app.get('/api/admin/pt-conversations', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { data: rows, error } = await supabase.from('messages')
+      .select('sender_id, receiver_id, content, created_at')
+      .eq('kind', 'parent_teacher').order('created_at', { ascending: false }).limit(1000)
+    if (error) throw error
+
+    const pairs = new Map()
+    for (const m of rows || []) {
+      const key = [m.sender_id, m.receiver_id].sort().join('|')
+      const p = pairs.get(key)
+      if (p) p.count += 1
+      else pairs.set(key, { a: m.sender_id, b: m.receiver_id, count: 1, last: m.content, lastAt: m.created_at })
+    }
+    const ids = [...new Set([...pairs.values()].flatMap(p => [p.a, p.b]))]
+    const { data: users } = ids.length
+      ? await supabase.from('users').select('id, name, username, role, org_id').in('id', ids)
+      : { data: [] }
+    const byId = Object.fromEntries((users || []).map(u => [u.id, u]))
+    const orgIds = [...new Set((users || []).map(u => u.org_id).filter(Boolean))]
+    const { data: orgs } = orgIds.length ? await supabase.from('organizations').select('id, name').in('id', orgIds) : { data: [] }
+    const orgName = Object.fromEntries((orgs || []).map(o => [o.id, o.name]))
+
+    const orgFilter = isUuid(req.query.orgId) ? req.query.orgId : null
+    const conversations = []
+    for (const p of pairs.values()) {
+      const x = byId[p.a], y = byId[p.b]
+      if (!x || !y) continue
+      const parent = x.role === 'parent' ? x : y
+      const teacher = x.role === 'teacher' ? x : y
+      if (parent.role !== 'parent' || teacher.role !== 'teacher') continue
+      if (orgFilter && teacher.org_id !== orgFilter && parent.org_id !== orgFilter) continue
+      conversations.push({
+        parent: { id: parent.id, name: displayName(parent) },
+        teacher: { id: teacher.id, name: displayName(teacher) },
+        orgName: orgName[teacher.org_id] || orgName[parent.org_id] || '',
+        count: p.count, lastMessage: String(p.last || '').slice(0, 140), lastAt: p.lastAt,
+      })
+    }
+    res.json({ conversations })
+  } catch (err) {
+    console.error('Admin PT conversations error:', err)
+    res.status(500).json({ error: 'Could not load parent-teacher conversations.' })
+  }
+})
+
+app.get('/api/admin/pt-thread', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { parent, teacher } = req.query
+    if (!isUuid(parent) || !isUuid(teacher)) return res.status(400).json({ error: 'Invalid conversation.' })
+    const { data: rows, error } = await supabase.from('messages')
+      .select('id, sender_id, content, created_at, read')
+      .eq('kind', 'parent_teacher')
+      .or(`and(sender_id.eq.${parent},receiver_id.eq.${teacher}),and(sender_id.eq.${teacher},receiver_id.eq.${parent})`)
+      .order('created_at', { ascending: false }).limit(200)
+    if (error) throw error
+    res.json({
+      messages: (rows || []).reverse().map(m => ({ id: m.id, fromParent: m.sender_id === parent, content: m.content, read: !!m.read, createdAt: m.created_at })),
+    })
+  } catch (err) {
+    console.error('Admin PT thread error:', err)
+    res.status(500).json({ error: 'Could not load this conversation.' })
   }
 })
 
