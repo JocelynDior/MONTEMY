@@ -485,7 +485,7 @@ async function buildStudentOverview(user, student) {
       : Promise.resolve({ data: null }),
     user.org_id
       ? supabase.from('events').select('id, title, description, date, location, type')
-          .eq('org_id', user.org_id).gte('date', nowIso).order('date', { ascending: true }).limit(10)
+          .or(`org_id.eq.${user.org_id},is_platform.eq.true`).gte('date', nowIso).order('date', { ascending: true }).limit(10)
       : Promise.resolve({ data: [] }),
   ])
 
@@ -2400,7 +2400,7 @@ app.get('/api/principal/overview', verifyToken, principalLimiter, async (req, re
       orgCounts(user.org_id),
       computeSchoolStats(user.org_id, DEFAULT_RISK_THRESHOLD),
       supabase.from('events').select('id, title, date, location, type')
-        .eq('org_id', user.org_id).gte('date', nowIso).order('date', { ascending: true }).limit(5),
+        .or(`org_id.eq.${user.org_id},is_platform.eq.true`).gte('date', nowIso).order('date', { ascending: true }).limit(5),
     ])
 
     res.json({
@@ -2543,7 +2543,7 @@ app.post('/api/principal/events', verifyToken, principalLimiter, async (req, res
     afterReply('Event', async () => {
       const recipients = await orgRecipientIds(user.org_id, { excludeId: user.id })
       const when = new Date(input.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
-      await notifyMany(recipients, `New event: "${input.title}" on ${when}.`, 'info')
+      await notifyMany(recipients, `New event: "${input.title}" on ${when}.`, 'info', '/events')
     })
   } catch (err) {
     console.error('Create event error:', err)
@@ -2561,8 +2561,14 @@ app.put('/api/principal/events/:id', verifyToken, principalLimiter, async (req, 
     if (input.error) return res.status(400).json({ error: input.error })
 
     // org_id in the filter means another school's event can never be edited
+    const { data: existing } = await supabase.from('events').select('date')
+      .eq('id', req.params.id).eq('org_id', user.org_id).eq('is_platform', false).maybeSingle()
+    if (!existing) return res.status(404).json({ error: 'Event not found.' })
+    // A new date means the 24h reminder should go out again
+    const update = new Date(existing.date).getTime() !== new Date(input.date).getTime()
+      ? { ...input, reminder_sent: false } : input
     const { data, error } = await supabase.from('events')
-      .update(input).eq('id', req.params.id).eq('org_id', user.org_id).select('id')
+      .update(update).eq('id', req.params.id).eq('org_id', user.org_id).eq('is_platform', false).select('id')
     if (error) throw error
     if (!data || !data.length) return res.status(404).json({ error: 'Event not found.' })
     res.json({ success: true })
@@ -2580,7 +2586,7 @@ app.delete('/api/principal/events/:id', verifyToken, principalLimiter, async (re
     if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Event not found.' })
 
     const { data, error } = await supabase.from('events')
-      .delete().eq('id', req.params.id).eq('org_id', user.org_id).select('id')
+      .delete().eq('id', req.params.id).eq('org_id', user.org_id).eq('is_platform', false).select('id')
     if (error) throw error
     if (!data || !data.length) return res.status(404).json({ error: 'Event not found.' })
     res.json({ success: true })
@@ -4474,7 +4480,8 @@ app.get('/api/timetable', verifyToken, timetableLimiter, async (req, res) => {
       supabase.from('school_terms').select('id, title, kind, start_date, end_date')
         .eq('org_id', user.org_id).lte('start_date', dayTo).gte('end_date', dayFrom).order('start_date'),
       // A day either side so events near midnight still land on the right day in the viewer's time zone
-      supabase.from('events').select('id, title, date, location, type').eq('org_id', user.org_id)
+      supabase.from('events').select('id, title, date, location, type')
+        .or(`org_id.eq.${user.org_id},is_platform.eq.true`)
         .gte('date', ttAddDays(start, -1).toISOString()).lt('date', ttAddDays(end, 2).toISOString()).order('date'),
     ])
     if (termsRes.error) throw termsRes.error
@@ -4789,6 +4796,232 @@ app.delete('/api/principal/timetable/terms/:id', verifyToken, timetableLimiter, 
   } catch (err) {
     console.error('Delete term error:', err)
     res.status(500).json({ error: 'Could not remove it. Please try again.' })
+  }
+})
+
+// ---------- Events system (Phase 23) ----------
+// One calendar for everyone. A user sees their own organisation's events plus platform-wide events
+// (is_platform = true, org_id empty, created by an admin). Principals manage their school's events
+// through /api/principal/events; admins manage platform events through /api/admin/events.
+// RSVPs live in event_rsvps. Only the API touches that table, and the org check happens here.
+const eventsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 90,
+  keyGenerator: (req) => req.user.id,
+  message: { error: 'Too many requests. Wait a moment and try again.' },
+})
+const RSVP_STATUSES = ['attending', 'not_attending']
+const EVENT_FIELDS = 'id, org_id, title, description, date, location, type, created_by, is_platform'
+
+async function eventsUser(req, res) {
+  const { data: user } = await supabase.from('users')
+    .select('id, name, role, org_id, is_verified').eq('id', req.user.id).maybeSingle()
+  if (!user) { res.status(403).json({ error: 'Account not found.' }); return null }
+  return user
+}
+
+// Can this user see this event? (own org, or platform-wide)
+const canSeeEvent = (user, ev) => !!ev && (ev.is_platform || (!!user.org_id && ev.org_id === user.org_id))
+
+app.get('/api/events', verifyToken, eventsLimiter, async (req, res) => {
+  try {
+    const user = await eventsUser(req, res)
+    if (!user) return
+    const isAdmin = user.role === 'admin'
+    const isPrincipal = user.role === 'principal'
+
+    let q = supabase.from('events').select(EVENT_FIELDS).order('date', { ascending: false }).limit(500)
+    if (isAdmin || !user.org_id) q = q.eq('is_platform', true)
+    else q = q.or(`org_id.eq.${user.org_id},is_platform.eq.true`)
+    const { data: events, error } = await q
+    if (error) throw error
+
+    const ids = (events || []).map(e => e.id)
+    const rsvps = ids.length ? await fetchIn('event_rsvps', 'event_id, user_id, status', 'event_id', ids, ['event_id', 'user_id']) : []
+    const mine = {}
+    const counts = {}
+    for (const r of rsvps) {
+      if (r.user_id === user.id) mine[r.event_id] = r.status
+      const c = counts[r.event_id] || (counts[r.event_id] = { attending: 0, notAttending: 0 })
+      if (r.status === 'attending') c.attending += 1
+      else c.notAttending += 1
+    }
+
+    res.json({
+      role: user.role,
+      isVerified: !!user.is_verified,
+      canCreate: isAdmin || (isPrincipal && !!user.org_id),
+      createPath: isAdmin ? '/api/admin/events' : '/api/principal/events',
+      types: EVENT_TYPES,
+      events: (events || []).map(e => ({
+        id: e.id,
+        title: e.title,
+        description: e.description,
+        date: e.date,
+        location: e.location,
+        type: e.type,
+        isPlatform: !!e.is_platform,
+        canEdit: isAdmin ? !!e.is_platform : (isPrincipal && !e.is_platform && e.org_id === user.org_id),
+        myRsvp: mine[e.id] || null,
+        // Headcounts are for the people who run the event
+        counts: (isAdmin || isPrincipal) ? (counts[e.id] || { attending: 0, notAttending: 0 }) : null,
+      })),
+    })
+  } catch (err) {
+    console.error('Events list error:', err)
+    res.status(500).json({ error: 'Could not load events. Please try again.' })
+  }
+})
+
+// Body: { status: 'attending' | 'not_attending' | null }  (null clears the answer)
+app.put('/api/events/:id/rsvp', verifyToken, eventsLimiter, async (req, res) => {
+  try {
+    const user = await eventsUser(req, res)
+    if (!user) return
+    if (!requireVerified(user, res)) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Event not found.' })
+    const status = req.body?.status
+    if (status !== null && !RSVP_STATUSES.includes(status)) return res.status(400).json({ error: 'Choose attending or not attending.' })
+
+    const { data: ev, error } = await supabase.from('events').select(EVENT_FIELDS).eq('id', req.params.id).maybeSingle()
+    if (error) throw error
+    if (!canSeeEvent(user, ev)) return res.status(404).json({ error: 'Event not found.' })
+    if (new Date(ev.date).getTime() < Date.now()) return res.status(400).json({ error: 'This event has already happened.' })
+
+    if (status === null) {
+      const { error: delErr } = await supabase.from('event_rsvps').delete().eq('event_id', ev.id).eq('user_id', user.id)
+      if (delErr) throw delErr
+    } else {
+      const { error: upErr } = await supabase.from('event_rsvps')
+        .upsert({ event_id: ev.id, user_id: user.id, status, updated_at: new Date().toISOString() }, { onConflict: 'event_id,user_id' })
+      if (upErr) throw upErr
+    }
+    res.json({ success: true, status })
+  } catch (err) {
+    console.error('RSVP error:', err)
+    res.status(500).json({ error: 'Could not save your answer. Please try again.' })
+  }
+})
+
+// ----- Admin: platform-wide events -----
+async function adminOrFail(req, res) {
+  const user = await loadUserWithRole(req.user, 'admin')
+  if (!user) { res.status(403).json({ error: 'Admins only' }); return null }
+  return user
+}
+
+// Everyone verified and active, on every organisation
+async function allVerifiedUserIds(excludeId) {
+  const rows = await fetchAllRows(() => supabase.from('users').select('id')
+    .eq('is_verified', true).or('is_suspended.is.null,is_suspended.eq.false').order('id'))
+  return rows.map(r => r.id).filter(id => id !== excludeId)
+}
+
+app.post('/api/admin/events', verifyToken, eventsLimiter, async (req, res) => {
+  try {
+    const user = await adminOrFail(req, res)
+    if (!user) return
+    const input = cleanEventInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+
+    const { data, error } = await supabase.from('events')
+      .insert({ ...input, org_id: null, is_platform: true, created_by: user.id }).select('id').single()
+    if (error) throw error
+    res.json({ success: true, id: data.id })
+
+    afterReply('Platform event', async () => {
+      const when = new Date(input.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
+      await notifyMany(await allVerifiedUserIds(user.id), `New platform event: "${input.title}" on ${when}.`, 'info', '/events')
+    })
+  } catch (err) {
+    console.error('Create platform event error:', err)
+    res.status(500).json({ error: 'Could not save the event. Please try again.' })
+  }
+})
+
+app.put('/api/admin/events/:id', verifyToken, eventsLimiter, async (req, res) => {
+  try {
+    const user = await adminOrFail(req, res)
+    if (!user) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Event not found.' })
+    const input = cleanEventInput(req.body || {})
+    if (input.error) return res.status(400).json({ error: input.error })
+
+    const { data: existing } = await supabase.from('events').select('date')
+      .eq('id', req.params.id).eq('is_platform', true).maybeSingle()
+    if (!existing) return res.status(404).json({ error: 'Event not found.' })
+    const update = new Date(existing.date).getTime() !== new Date(input.date).getTime()
+      ? { ...input, reminder_sent: false } : input
+    const { error } = await supabase.from('events').update(update).eq('id', req.params.id).eq('is_platform', true)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Update platform event error:', err)
+    res.status(500).json({ error: 'Could not save your changes. Please try again.' })
+  }
+})
+
+app.delete('/api/admin/events/:id', verifyToken, eventsLimiter, async (req, res) => {
+  try {
+    const user = await adminOrFail(req, res)
+    if (!user) return
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Event not found.' })
+    const { data, error } = await supabase.from('events').delete().eq('id', req.params.id).eq('is_platform', true).select('id')
+    if (error) throw error
+    if (!data || !data.length) return res.status(404).json({ error: 'Event not found.' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Delete platform event error:', err)
+    res.status(500).json({ error: 'Could not delete the event. Please try again.' })
+  }
+})
+
+// ----- Reminders (called by a Render Cron Job every ~15 minutes) -----
+// Sends one "tomorrow" reminder per event, to everyone who can see it except people who said they can't come.
+// Auth: header x-cron-secret must match the CRON_SECRET environment variable on Render.
+const cronLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Too many requests.' },
+})
+
+function cronSecretMatches(provided) {
+  const expected = process.env.CRON_SECRET
+  if (!expected || typeof provided !== 'string') return false
+  const a = crypto.createHash('sha256').update(provided).digest()
+  const b = crypto.createHash('sha256').update(expected).digest()
+  return crypto.timingSafeEqual(a, b)
+}
+
+app.post('/api/cron/event-reminders', cronLimiter, async (req, res) => {
+  if (!cronSecretMatches(req.headers['x-cron-secret'])) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const now = new Date()
+    const soon = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+    const { data: due, error } = await supabase.from('events').select(EVENT_FIELDS)
+      .eq('reminder_sent', false).gt('date', now.toISOString()).lte('date', soon.toISOString()).limit(200)
+    if (error) throw error
+
+    let sent = 0
+    for (const ev of due || []) {
+      // Claim the event first so two overlapping runs can never send it twice
+      const { data: claimed, error: claimErr } = await supabase.from('events')
+        .update({ reminder_sent: true }).eq('id', ev.id).eq('reminder_sent', false).select('id')
+      if (claimErr || !claimed || !claimed.length) continue
+
+      const [recipients, declined] = await Promise.all([
+        ev.is_platform ? allVerifiedUserIds() : (ev.org_id ? orgRecipientIds(ev.org_id) : []),
+        fetchAllRows(() => supabase.from('event_rsvps').select('user_id').eq('event_id', ev.id).eq('status', 'not_attending').order('user_id')),
+      ])
+      const skip = new Set(declined.map(r => r.user_id))
+      const when = new Date(ev.date).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Johannesburg' })
+      await notifyMany(recipients.filter(id => !skip.has(id)), `Reminder: "${ev.title}" is tomorrow at ${when}.`, 'warning', '/events')
+      sent += 1
+    }
+    res.json({ success: true, remindersSent: sent })
+  } catch (err) {
+    console.error('Event reminders error:', err)
+    res.status(500).json({ error: 'Could not send reminders.' })
   }
 })
 
