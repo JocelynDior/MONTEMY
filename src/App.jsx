@@ -43,6 +43,7 @@ import Messages from './pages/shared/Messages'
 import AdminOrgs from './pages/admin/AdminOrgs'
 import AdminOrgDetail from './pages/admin/AdminOrgDetail'
 import SchedulePage from './pages/timetable/SchedulePage'
+import Events from './pages/shared/Events'
 
 // Signed in AND the right role
 const guard = (role, element) => (
@@ -69,6 +70,9 @@ export default function App() {
 
           {/* Messaging: one shared page for every role */}
           <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
+
+          {/* Events: one shared page for every role */}
+          <Route path="/events" element={<ProtectedRoute><Events /></ProtectedRoute>} />
 
           {/* Any signed-in user */}
           <Route path="/pending-verification" element={<ProtectedRoute><PendingVerification /></ProtectedRoute>} />
