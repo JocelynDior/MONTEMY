@@ -12,6 +12,7 @@ const cards = [
   { icon: '📚', title: 'Resources', description: 'Upload notes, worksheets and past papers', path: '/teacher/resources', requiresVerification: true },
   { icon: '💬', title: 'Messages', description: 'Communicate with students and parents', path: '/messages', requiresVerification: true },
   { icon: '📅', title: 'Schedule', description: 'Your timetable, and the timetables of your classes', path: '/teacher/schedule', requiresVerification: false },
+  { icon: '🎉', title: 'Events', description: 'School events and RSVP', path: '/events', requiresVerification: false },
   { icon: '⚙️', title: 'Contact Admin', description: 'Get help from Montemy support', path: '/teacher/contact-admin', requiresVerification: false },
 ]
 
