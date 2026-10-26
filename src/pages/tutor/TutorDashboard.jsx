@@ -14,6 +14,7 @@ const cards = [
   { icon: '📊', title: 'Progress Reports', description: 'Track and report on student progress', path: '/tutor/progress', requiresVerification: true },
   { icon: '💬', title: 'Messages', description: 'Communicate with students and parents', path: '/messages', requiresVerification: true },
   { icon: '📖', title: 'Resources', description: 'Access and share learning materials', path: '/tutor/resources', requiresVerification: false },
+  { icon: '🎉', title: 'Events', description: 'Events and RSVP', path: '/events', requiresVerification: false },
   { icon: '⚙️', title: 'Contact Admin', description: 'Get help from Montemy support', path: '/tutor/contact-admin', requiresVerification: false },
 ]
 
