@@ -95,7 +95,7 @@ export default function AdminDashboard() {
       <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem 1.5rem' }}>
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources'], ['broadcast', 'Broadcast']].map(([key, label]) => (
+          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources'], ['broadcast', 'Broadcast'], ['events', 'Events']].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               style={{ border: 'none', cursor: 'pointer', padding: '0.6rem 1.4rem', borderRadius: '8px', fontWeight: 600,
                 background: tab === key ? 'rgba(var(--color-primary-rgb),0.85)' : 'rgba(255,255,255,0.08)',
@@ -152,6 +152,14 @@ export default function AdminDashboard() {
           <AdminResources />
         ) : tab === 'broadcast' ? (
           <AdminBroadcast />
+        ) : tab === 'events' ? (
+          <div style={{ ...glassCard, padding: '1.25rem' }}>
+            <h3 style={{ color: C.turquoise, fontSize: '1.05rem', marginBottom: '0.5rem' }}>Platform-wide events</h3>
+            <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.9rem', marginBottom: '1rem' }}>
+              Create events that every school and tutor organisation sees on their calendar. Everyone is notified, and reminded 24 hours before.
+            </p>
+            <button onClick={() => navigate('/events')} style={smallBtn}>Open events calendar</button>
+          </div>
         ) : (
           <>
             <h2 style={{ color: C.turquoise, marginBottom: '1.25rem' }}>Pending Verification ({pendingCount})</h2>
