@@ -1,1 +1,17 @@
-
+{
+  "id": "/",
+  "name": "Montemy",
+  "short_name": "Montemy",
+  "description": "Montemy: the all-in-one education platform for students, teachers, parents and schools.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#001F3F",
+  "background_color": "#001F3F",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
