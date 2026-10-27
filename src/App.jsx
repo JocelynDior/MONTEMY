@@ -1,5 +1,5 @@
-import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import React, { lazy, Suspense } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 
 import { AuthProvider } from './context/AuthContext'
 import { BrandingProvider } from './context/BrandingContext'
@@ -7,46 +7,48 @@ import { ProtectedRoute, RoleRoute, PublicOnlyRoute } from './components/routing
 
 import Landing from './pages/auth/Landing'
 import Login from './pages/auth/Login'
-import AccountTypeSelect from './pages/auth/AccountTypeSelect'
-import Register from './pages/auth/Register'
-import PendingVerification from './pages/auth/PendingVerification'
+const AccountTypeSelect = lazy(() => import('./pages/auth/AccountTypeSelect'))
+const Register = lazy(() => import('./pages/auth/Register'))
+const PendingVerification = lazy(() => import('./pages/auth/PendingVerification'))
 
-import StudentDashboard from './pages/student/StudentDashboard'
-import StudentAcademics from './pages/student/StudentAcademics'
-import StudentAssignment from './pages/student/StudentAssignment'
-import StudentResources from './pages/student/StudentResources'
-import TeacherResources from './pages/teacher/TeacherResources'
-import StudentAiTutor from './pages/student/StudentAiTutor'
+const StudentDashboard = lazy(() => import('./pages/student/StudentDashboard'))
+const StudentAcademics = lazy(() => import('./pages/student/StudentAcademics'))
+const StudentAssignment = lazy(() => import('./pages/student/StudentAssignment'))
+const StudentResources = lazy(() => import('./pages/student/StudentResources'))
+const TeacherResources = lazy(() => import('./pages/teacher/TeacherResources'))
+const StudentAiTutor = lazy(() => import('./pages/student/StudentAiTutor'))
 
-import TeacherDashboard from './pages/teacher/TeacherDashboard'
-import TeacherClasses from './pages/teacher/TeacherClasses'
-import TeacherAssignments from './pages/teacher/TeacherAssignments'
-import TeacherProgress from './pages/teacher/TeacherProgress'
+const TeacherDashboard = lazy(() => import('./pages/teacher/TeacherDashboard'))
+const TeacherClasses = lazy(() => import('./pages/teacher/TeacherClasses'))
+const TeacherAssignments = lazy(() => import('./pages/teacher/TeacherAssignments'))
+const TeacherProgress = lazy(() => import('./pages/teacher/TeacherProgress'))
 
-import ParentDashboard from './pages/parent/ParentDashboard'
-import ParentMyChild from './pages/parent/ParentMyChild'
+const ParentDashboard = lazy(() => import('./pages/parent/ParentDashboard'))
+const ParentMyChild = lazy(() => import('./pages/parent/ParentMyChild'))
 
-import PrincipalDashboard from './pages/principal/PrincipalDashboard'
-import PrincipalEvents from './pages/principal/PrincipalEvents'
-import PrincipalStats from './pages/principal/PrincipalStats'
-import PrincipalStaff from './pages/principal/PrincipalStaff'
+const PrincipalDashboard = lazy(() => import('./pages/principal/PrincipalDashboard'))
+const PrincipalEvents = lazy(() => import('./pages/principal/PrincipalEvents'))
+const PrincipalStats = lazy(() => import('./pages/principal/PrincipalStats'))
+const PrincipalStaff = lazy(() => import('./pages/principal/PrincipalStaff'))
 
-import TutorDashboard from './pages/tutor/TutorDashboard'
-import TutorStudents from './pages/tutor/TutorStudents'
-import TutorSessions from './pages/tutor/TutorSessions'
-import SchoolMemberDashboard from './pages/schoolmember/SchoolMemberDashboard'
+const TutorDashboard = lazy(() => import('./pages/tutor/TutorDashboard'))
+const TutorStudents = lazy(() => import('./pages/tutor/TutorStudents'))
+const TutorSessions = lazy(() => import('./pages/tutor/TutorSessions'))
+const SchoolMemberDashboard = lazy(() => import('./pages/schoolmember/SchoolMemberDashboard'))
 
-import AdminDashboard from './pages/admin/AdminDashboard'
-import AdminUsers from './pages/admin/AdminUsers'
-import AdminClasses from './pages/admin/AdminClasses'
-import Messages from './pages/shared/Messages'
-import AdminOrgs from './pages/admin/AdminOrgs'
-import AdminOrgDetail from './pages/admin/AdminOrgDetail'
-import SchedulePage from './pages/timetable/SchedulePage'
-import Events from './pages/shared/Events'
-import Settings from './pages/Settings'
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
+const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'))
+const AdminClasses = lazy(() => import('./pages/admin/AdminClasses'))
+const Messages = lazy(() => import('./pages/shared/Messages'))
+const AdminOrgs = lazy(() => import('./pages/admin/AdminOrgs'))
+const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'))
+const SchedulePage = lazy(() => import('./pages/timetable/SchedulePage'))
+const Events = lazy(() => import('./pages/shared/Events'))
+const Settings = lazy(() => import('./pages/Settings'))
 import InstallPrompt from './components/pwa/InstallPrompt'
 import OfflineBanner from './components/pwa/OfflineBanner'
+import ErrorBoundary from './components/shared/ErrorBoundary'
+import LoadingScreen from './components/shared/LoadingScreen'
 
 // Signed in AND the right role
 const guard = (role, element) => (
@@ -55,6 +57,18 @@ const guard = (role, element) => (
   </ProtectedRoute>
 )
 
+// Error boundary (cleared on every navigation), lazy-page loading state and a short fade between pages
+function AppRoutes({ children }) {
+  const { pathname } = useLocation()
+  return (
+    <ErrorBoundary resetKey={pathname}>
+      <div key={pathname} className="page-fade">
+        <Suspense fallback={<LoadingScreen />}>{children}</Suspense>
+      </div>
+    </ErrorBoundary>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -62,6 +76,7 @@ export default function App() {
         <BrandingProvider>
         <OfflineBanner />
         <InstallPrompt />
+        <AppRoutes>
         <Routes>
           {/* Public (signed-in users are redirected to their dashboard) */}
           <Route path="/" element={<PublicOnlyRoute><Landing /></PublicOnlyRoute>} />
@@ -132,6 +147,7 @@ export default function App() {
           {/* Anything else */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </AppRoutes>
         </BrandingProvider>
       </AuthProvider>
     </BrowserRouter>
