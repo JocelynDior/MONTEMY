@@ -38,4 +38,6 @@ export async function getProfile(userId) {
 export async function logout() {
   await supabase.auth.signOut()
   localStorage.removeItem('montemy_role')
+  // Offline copies of the last user's data must not be readable by the next person on this device
+  try { await window.caches?.delete('montemy-api') } catch { /* ignore */ }
 }
