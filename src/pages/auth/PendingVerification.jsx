@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { logout, ROLE_ROUTES } from '../../supabase/authHelpers'
-import { BACKGROUND_VIDEO } from '../../config/media'
+import Background from '../../components/shared/Background'
 import { glassCard, glassBtn, addRipple, C } from '../../styles/glass'
 
 export default function PendingVerification() {
@@ -32,13 +32,7 @@ export default function PendingVerification() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-      {BACKGROUND_VIDEO ? (
-        <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-          <source src={BACKGROUND_VIDEO} type="video/mp4" />
-        </video>
-      ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
-      )}
+      <Background />
 
       <style>{`
         @keyframes pulse { 0%,100%{opacity:0.5;transform:scale(1);} 50%{opacity:1;transform:scale(1.08);} }
