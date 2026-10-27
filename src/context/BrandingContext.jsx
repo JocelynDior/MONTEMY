@@ -82,6 +82,12 @@ function applyTheme(b) {
   const meta = document.querySelector('meta[name="theme-color"]')
   if (meta) meta.setAttribute('content', b.bgColor)
 
+  applyManifest(b)
+  const appleIcon = document.querySelector('link[rel="apple-touch-icon"]')
+  if (appleIcon) appleIcon.setAttribute('href', b.logoUrl || '/icons/apple-touch-icon.png')
+  const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]')
+  if (appleTitle) appleTitle.setAttribute('content', b.appName)
+
   let icon = document.querySelector('link[data-branding-icon]')
   if (b.faviconUrl) {
     if (!icon) {
@@ -94,6 +100,36 @@ function applyTheme(b) {
   } else if (icon) {
     icon.remove()
   }
+}
+
+// ---- Installable app (PWA): white-labelled organisations install the app under their own name ----
+const DEFAULT_MANIFEST_HREF = '/manifest.json'
+let manifestUrl = null
+
+function applyManifest(b) {
+  const link = document.querySelector('link[rel="manifest"]')
+  if (!link) return
+  const custom = b.appName !== DEFAULT_BRANDING.appName || !!b.logoUrl
+    || b.primaryColor.toLowerCase() !== DEFAULT_BRANDING.primaryColor.toLowerCase()
+    || b.bgColor.toLowerCase() !== DEFAULT_BRANDING.bgColor.toLowerCase()
+
+  if (manifestUrl) { URL.revokeObjectURL(manifestUrl); manifestUrl = null }
+  if (!custom) { link.setAttribute('href', DEFAULT_MANIFEST_HREF); return }
+
+  const origin = window.location.origin
+  const icons = b.logoUrl
+    ? [{ src: b.logoUrl, sizes: '512x512', type: 'image/png', purpose: 'any' }]
+    : [
+        { src: `${origin}/icons/icon-192.png`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: `${origin}/icons/icon-512.png`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+      ]
+  const manifest = {
+    id: `${origin}/`, name: b.appName, short_name: b.appName.slice(0, 12),
+    start_url: `${origin}/`, scope: `${origin}/`, display: 'standalone',
+    theme_color: b.bgColor, background_color: b.bgColor, icons,
+  }
+  manifestUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }))
+  link.setAttribute('href', manifestUrl)
 }
 
 // Last-used branding is cached so a refresh doesn't flash the default colours
