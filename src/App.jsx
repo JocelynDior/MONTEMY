@@ -45,6 +45,8 @@ import AdminOrgDetail from './pages/admin/AdminOrgDetail'
 import SchedulePage from './pages/timetable/SchedulePage'
 import Events from './pages/shared/Events'
 import Settings from './pages/Settings'
+import InstallPrompt from './components/pwa/InstallPrompt'
+import OfflineBanner from './components/pwa/OfflineBanner'
 
 // Signed in AND the right role
 const guard = (role, element) => (
@@ -58,6 +60,8 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <BrandingProvider>
+        <OfflineBanner />
+        <InstallPrompt />
         <Routes>
           {/* Public (signed-in users are redirected to their dashboard) */}
           <Route path="/" element={<PublicOnlyRoute><Landing /></PublicOnlyRoute>} />
