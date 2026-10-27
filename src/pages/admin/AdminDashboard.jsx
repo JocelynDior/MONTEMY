@@ -10,6 +10,8 @@ import MessagesBell from '../../components/layout/MessagesBell'
 import NotificationBell from '../../components/layout/NotificationBell'
 import AdminBroadcast from '../../components/admin/AdminBroadcast'
 import AdminParentTeacher from '../../components/admin/AdminParentTeacher'
+import WhiteLabelManager from '../../components/admin/WhiteLabelManager'
+import { useBranding } from '../../context/BrandingContext'
 import { BACKGROUND_VIDEO } from '../../config/media'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
@@ -18,6 +20,7 @@ const smallBtn = { ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSiz
 export default function AdminDashboard() {
   const navigate = useNavigate()
   const { profile } = useAuth()
+  const { appName } = useBranding()
   const [tab, setTab] = useState('overview')
   const [stats, setStats] = useState({ totalUsers: 0, pendingUsers: 0, organizations: 0 })
   const [pending, setPending] = useState([])
@@ -78,7 +81,7 @@ export default function AdminDashboard() {
       )}
 
       <nav style={glassNav}>
-        <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>MONTEMY <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>ADMIN</span></span>
+        <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>{appName.toUpperCase()} <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>ADMIN</span></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           {pendingCount > 0 && (
             <span onClick={() => setTab('pending')} title="Pending verifications"
@@ -96,7 +99,7 @@ export default function AdminDashboard() {
       <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem 1.5rem' }}>
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources'], ['broadcast', 'Broadcast'], ['events', 'Events'], ['pt', 'Parent–Teacher']].map(([key, label]) => (
+          {[['overview', 'Overview'], ['pending', 'Pending'], ['links', 'Parent links'], ['resources', 'Resources'], ['broadcast', 'Broadcast'], ['events', 'Events'], ['pt', 'Parent–Teacher'], ['brand', 'White label']].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               style={{ border: 'none', cursor: 'pointer', padding: '0.6rem 1.4rem', borderRadius: '8px', fontWeight: 600,
                 background: tab === key ? 'rgba(var(--color-primary-rgb),0.85)' : 'rgba(255,255,255,0.08)',
@@ -153,6 +156,8 @@ export default function AdminDashboard() {
           <AdminResources />
         ) : tab === 'broadcast' ? (
           <AdminBroadcast />
+        ) : tab === 'brand' ? (
+          <WhiteLabelManager />
         ) : tab === 'pt' ? (
           <AdminParentTeacher />
         ) : tab === 'events' ? (
