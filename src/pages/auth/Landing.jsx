@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
-import { BACKGROUND_VIDEO } from '../../config/media'
+import Background from '../../components/shared/Background'
 import { glassCard, glassBtn, addRipple, C } from '../../styles/glass'
 
 const roleRoutes = {
@@ -46,13 +46,7 @@ export default function Landing() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
 
-      {BACKGROUND_VIDEO ? (
-        <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-          <source src={BACKGROUND_VIDEO} type="video/mp4" />
-        </video>
-      ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
-      )}
+      <Background />
 
       {/* Animated orbs */}
       <div style={{ position: 'fixed', top: '15%', left: '10%', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--color-primary-rgb),0.15) 0%, transparent 70%)', animation: 'orbFloat 7s ease-in-out infinite', pointerEvents: 'none', zIndex: 0 }} />
