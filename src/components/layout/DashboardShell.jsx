@@ -5,7 +5,9 @@ import { useAuth } from '../../context/AuthContext'
 import { useBranding } from '../../context/BrandingContext'
 import MessagesBell from './MessagesBell'
 import NotificationBell from './NotificationBell'
-import { BACKGROUND_VIDEO } from '../../config/media'
+import Background from '../../components/shared/Background'
+import ErrorBoundary from '../../components/shared/ErrorBoundary'
+import { SkeletonCards } from '../../components/shared/Skeleton'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
 // Shared dashboard layout used by student, teacher, parent, principal,
@@ -25,13 +27,7 @@ export default function DashboardShell({ role, cards = [], children }) {
 
   return (
     <div style={{ minHeight: '100vh', position: 'relative', color: 'white' }}>
-      {BACKGROUND_VIDEO ? (
-        <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-          <source src={BACKGROUND_VIDEO} type="video/mp4" />
-        </video>
-      ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
-      )}
+      <Background />
 
       <nav style={glassNav}>
         <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>
@@ -63,7 +59,7 @@ export default function DashboardShell({ role, cards = [], children }) {
         </h2>
 
         {loading ? (
-          <p style={{ color: 'rgba(255,255,255,0.6)' }}>Loading...</p>
+          <SkeletonCards />
         ) : (
           <>
             {!verified && (
@@ -73,9 +69,10 @@ export default function DashboardShell({ role, cards = [], children }) {
               </div>
             )}
 
-            {children}
+            <ErrorBoundary section>{children}</ErrorBoundary>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.25rem', marginTop: '1.5rem' }}>
+            <ErrorBoundary section>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(240px, 100%), 1fr))', gap: '1.25rem', marginTop: '1.5rem' }}>
               {cards.map((card) => {
                 const locked = card.requiresVerification && !verified
                 return (
@@ -90,6 +87,7 @@ export default function DashboardShell({ role, cards = [], children }) {
                 )
               })}
             </div>
+            </ErrorBoundary>
           </>
         )}
       </div>
