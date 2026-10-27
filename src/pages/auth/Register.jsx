@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
-import { BACKGROUND_VIDEO } from '../../config/media'
+import Background from '../../components/shared/Background'
 import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
 import GradeSubjectFields from '../../components/student/GradeSubjectFields'
 
@@ -37,16 +37,6 @@ function friendlyError(err) {
 }
 
 const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
-
-function Background() {
-  return BACKGROUND_VIDEO ? (
-    <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-      <source src={BACKGROUND_VIDEO} type="video/mp4" />
-    </video>
-  ) : (
-    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
-  )
-}
 
 export default function Register() {
   const { type } = useParams()
