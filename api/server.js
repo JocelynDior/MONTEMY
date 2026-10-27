@@ -5453,6 +5453,152 @@ app.post('/api/account/delete', verifyToken, accountLimiter, async (req, res) =>
   }
 })
 
+// ---------- White label (Phase 26) ----------
+// organizations.branding holds { enabled, appName, primaryColor, bgColor, logoUrl, faviconUrl }.
+// Admins edit it per organisation; every signed-in user reads their own organisation's branding through
+// GET /api/branding (the service role reads it, so it works whatever the RLS state is).
+const BRAND_DEFAULTS = { appName: 'Montemy', primaryColor: '#40e0d0', bgColor: '#001f3f' }
+const BRAND_HEX = /^#[0-9a-f]{6}$/i
+
+function parseBranding(raw) {
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw) } catch { raw = null } }
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+}
+
+// What the admin screen edits: always a complete object, plus whether the org really is white-labelled
+function shapeBranding(raw) {
+  const b = parseBranding(raw)
+  const str = (v) => (typeof v === 'string' ? v.trim() : '')
+  const appName = str(b.appName) || BRAND_DEFAULTS.appName
+  const primaryColor = BRAND_HEX.test(str(b.primaryColor)) ? str(b.primaryColor).toLowerCase() : BRAND_DEFAULTS.primaryColor
+  const bgColor = BRAND_HEX.test(str(b.bgColor)) ? str(b.bgColor).toLowerCase() : BRAND_DEFAULTS.bgColor
+  const logoUrl = str(b.logoUrl)
+  const custom = appName !== BRAND_DEFAULTS.appName || primaryColor !== BRAND_DEFAULTS.primaryColor
+    || bgColor !== BRAND_DEFAULTS.bgColor || !!logoUrl
+  return { enabled: b.enabled !== false && custom, appName, primaryColor, bgColor, logoUrl }
+}
+
+async function loadOrgBranding(orgId) {
+  const { data, error } = await supabase.from('organizations').select('id, name, branding').eq('id', orgId).maybeSingle()
+  if (error) throw error
+  return data
+}
+
+async function saveOrgBranding(orgId, next) {
+  const stored = { ...next, faviconUrl: next.logoUrl || '' }
+  const { error } = await supabase.from('organizations').update({ branding: stored }).eq('id', orgId)
+  if (error) throw error
+  return stored
+}
+
+// The signed-in user's own organisation branding (the app applies it at runtime)
+app.get('/api/branding', verifyToken, async (req, res) => {
+  try {
+    const { data: me } = await supabase.from('users').select('org_id').eq('id', req.user.id).maybeSingle()
+    if (!me?.org_id) return res.json({ branding: null })
+    const org = await loadOrgBranding(me.org_id)
+    res.json({ branding: org?.branding ?? null })
+  } catch (err) {
+    console.error('Branding load error:', err)
+    res.status(500).json({ error: 'Could not load branding.' })
+  }
+})
+
+app.get('/api/admin/orgs/:id/branding', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const org = await loadOrgBranding(req.params.id)
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+    res.json({ orgName: org.name, branding: shapeBranding(org.branding) })
+  } catch (err) {
+    console.error('Admin branding load error:', err)
+    res.status(500).json({ error: 'Could not load this organisation\'s branding.' })
+  }
+})
+
+// Body: { enabled, appName, primaryColor, bgColor }. The logo has its own routes below.
+app.put('/api/admin/orgs/:id/branding', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const org = await loadOrgBranding(req.params.id)
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+
+    const b = req.body || {}
+    const appName = typeof b.appName === 'string' ? b.appName.trim().replace(/\s+/g, ' ') : ''
+    if (!appName) return res.status(400).json({ error: 'Give the app a name.' })
+    if (appName.length > 30) return res.status(400).json({ error: 'The app name is too long (max 30 characters).' })
+    if (!BRAND_HEX.test(String(b.primaryColor || '')) || !BRAND_HEX.test(String(b.bgColor || ''))) {
+      return res.status(400).json({ error: 'Choose both colours.' })
+    }
+    const current = shapeBranding(org.branding)
+    const stored = await saveOrgBranding(org.id, {
+      enabled: b.enabled === true,
+      appName,
+      primaryColor: String(b.primaryColor).toLowerCase(),
+      bgColor: String(b.bgColor).toLowerCase(),
+      logoUrl: current.logoUrl,
+    })
+    res.json({ success: true, branding: shapeBranding(stored) })
+  } catch (err) {
+    console.error('Admin branding save error:', err)
+    res.status(500).json({ error: 'Could not save the branding. Please try again.' })
+  }
+})
+
+// Logo, step 2 (step 1 is the existing /api/admin/orgs/:id/logo/upload-url): confirm the file arrived,
+// then store its public link in the branding (the organisation's own logo is left alone).
+app.post('/api/admin/orgs/:id/branding/logo', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  let removeOnFail = null
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const org = await loadOrgBranding(req.params.id)
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+
+    const path = String(req.body?.path || '')
+    const fileKey = path.slice(org.id.length + 1)
+    if (!path.startsWith(`${org.id}/`) || !/^[0-9a-f-]{36}\.[a-z]{2,4}$/i.test(fileKey)) {
+      return res.status(400).json({ error: 'That upload is not valid. Please try again.' })
+    }
+    removeOnFail = path
+    const { data: found, error: listErr } = await supabase.storage.from(ORG_LOGO_BUCKET).list(org.id, { search: fileKey, limit: 10 })
+    if (listErr) throw listErr
+    const obj = (found || []).find(f => f.name === fileKey)
+    if (!obj) { removeOnFail = null; return res.status(400).json({ error: 'We could not find the uploaded file. Please try again.' }) }
+    const size = Number(obj.metadata?.size) || 0
+    if (!ORG_LOGO_TYPES[obj.metadata?.mimetype || ''] || size <= 0 || size > ORG_LOGO_MAX_BYTES) {
+      await supabase.storage.from(ORG_LOGO_BUCKET).remove([path])
+      removeOnFail = null
+      return res.status(400).json({ error: 'That file is not allowed. Use a PNG, JPG or WebP image up to 2MB.' })
+    }
+
+    const { data: pub } = supabase.storage.from(ORG_LOGO_BUCKET).getPublicUrl(path)
+    const current = shapeBranding(org.branding)
+    const stored = await saveOrgBranding(org.id, { ...current, logoUrl: pub.publicUrl })
+    removeOnFail = null
+    if (current.logoUrl && current.logoUrl !== pub.publicUrl) await removeOrgLogoFile(current.logoUrl)
+    res.json({ success: true, branding: shapeBranding(stored) })
+  } catch (err) {
+    console.error('Branding logo save error:', err)
+    if (removeOnFail) await supabase.storage.from(ORG_LOGO_BUCKET).remove([removeOnFail]).catch(() => {})
+    res.status(500).json({ error: 'Could not save the logo. Please try again.' })
+  }
+})
+
+app.delete('/api/admin/orgs/:id/branding/logo', verifyToken, requireAdmin, orgAdminLimiter, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Organisation not found.' })
+    const org = await loadOrgBranding(req.params.id)
+    if (!org) return res.status(404).json({ error: 'Organisation not found.' })
+    const current = shapeBranding(org.branding)
+    const stored = await saveOrgBranding(org.id, { ...current, logoUrl: '' })
+    if (current.logoUrl) await removeOrgLogoFile(current.logoUrl)
+    res.json({ success: true, branding: shapeBranding(stored) })
+  } catch (err) {
+    console.error('Branding logo remove error:', err)
+    res.status(500).json({ error: 'Could not remove the logo. Please try again.' })
+  }
+})
+
 app.listen(PORT, () => {
   console.log(`Montemy API running on port ${PORT}`)
 })
