@@ -120,8 +120,8 @@ function applyManifest(b) {
   const icons = b.logoUrl
     ? [{ src: b.logoUrl, sizes: '512x512', type: 'image/png', purpose: 'any' }]
     : [
-        { src: `${origin}/icons/icon-192.png`, sizes: '192x192', type: 'image/png', purpose: 'any' },
-        { src: `${origin}/icons/icon-512.png`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: `${origin}/icons/icon-192%20(1).png`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: `${origin}/icons/icon-512%20(1).png`, sizes: '512x512', type: 'image/png', purpose: 'any' },
       ]
   const manifest = {
     id: `${origin}/`, name: b.appName, short_name: b.appName.slice(0, 12),
