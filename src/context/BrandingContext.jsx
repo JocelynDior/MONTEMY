@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useState } from 'react'
-import { supabase } from '../supabase/client'
+import { apiFetch } from '../api/apiClient'
 import { useAuth } from './AuthContext'
 
 // ---- Defaults (Montemy) ----
@@ -28,7 +28,7 @@ const mixWhite = (rgb, t) => rgb.map(v => clamp(v + (255 - v) * t))
 const rgbStr = (rgb) => rgb.map(Math.round).join(', ')
 
 // Turns a branding object into the full set of CSS variables
-function buildTheme(b) {
+export function buildTheme(b) {
   const p = hexToRgb(b.primaryColor)
   const bg = hexToRgb(b.bgColor)
   const defaultPrimary = b.primaryColor.toLowerCase() === DEFAULT_BRANDING.primaryColor.toLowerCase()
@@ -133,21 +133,17 @@ export function BrandingProvider({ children }) {
       return
     }
 
+    // Read through the API (service role) so it works whatever the row level security state is
     let cancelled = false
-    supabase
-      .from('organizations')
-      .select('branding')
-      .eq('id', orgId)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    apiFetch('/api/branding')
+      .then((data) => {
         if (cancelled) return
-        if (error) {
-          console.warn('Could not load branding:', error.message)
-          return // keep current theme
-        }
         const next = normalizeBranding(data?.branding)
         setBranding(next)
         writeCache(next)
+      })
+      .catch((err) => {
+        if (!cancelled) console.warn('Could not load branding:', err.message) // keep current theme
       })
     return () => { cancelled = true }
   }, [initializing, loading, userId, orgId])
