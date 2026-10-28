@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import StudentPage from '../../components/student/StudentPage'
 import { Chip, ErrorBox, muted, panel } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const TABS = ['Teachers', 'Other staff']
 
@@ -25,7 +26,7 @@ export default function PrincipalStaff() {
         ))}
       </div>
 
-      {loading && <p style={muted}>Loading...</p>}
+      {loading && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
 
       {data && tab === 'Teachers' && (
