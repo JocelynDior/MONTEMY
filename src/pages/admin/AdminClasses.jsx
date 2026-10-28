@@ -4,6 +4,7 @@ import { Chip, ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '..
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { glassInput } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const GRADES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
@@ -186,7 +187,7 @@ export default function AdminClasses() {
       )}
 
       {error && <ErrorBox message={error} onRetry={reload} />}
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
 
       {data && (classes.length === 0
         ? <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>No classes yet.</div>
