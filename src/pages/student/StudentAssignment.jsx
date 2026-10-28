@@ -7,6 +7,7 @@ import { fmtDate, gradeColor, statusColor } from '../../components/student/stude
 import { ACCEPT, fmtSize, iconFor } from '../../components/resources/resourceUtils'
 import { openAssignmentFile, uploadAssignmentFile } from '../../components/assignments/assignmentFiles'
 import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
 const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
@@ -135,7 +136,7 @@ export default function StudentAssignment() {
         <button onClick={() => navigate('/student/academics')} style={ghostBtn}>Back to homework</button>
       </div>
 
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
       {error && <div style={{ ...panel, borderColor: 'rgba(255,80,80,0.4)' }}><p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p><button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button></div>}
       {notice && <p role="status" style={{ color: '#7CFC9A', fontSize: '0.95rem', marginBottom: '1rem' }}>{notice}</p>}
 
