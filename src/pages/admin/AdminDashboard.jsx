@@ -12,7 +12,9 @@ import AdminBroadcast from '../../components/admin/AdminBroadcast'
 import AdminParentTeacher from '../../components/admin/AdminParentTeacher'
 import WhiteLabelManager from '../../components/admin/WhiteLabelManager'
 import { useBranding } from '../../context/BrandingContext'
-import { BACKGROUND_VIDEO } from '../../config/media'
+import Background from '../../components/shared/Background'
+import ErrorBoundary from '../../components/shared/ErrorBoundary'
+import SkeletonList from '../../components/shared/Skeleton'
 import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
 
 const smallBtn = { ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSize: '0.85rem', margin: 0 }
@@ -72,13 +74,7 @@ export default function AdminDashboard() {
 
   return (
     <div style={{ minHeight: '100vh', position: 'relative', color: 'white' }}>
-      {BACKGROUND_VIDEO ? (
-        <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-          <source src={BACKGROUND_VIDEO} type="video/mp4" />
-        </video>
-      ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
-      )}
+      <Background />
 
       <nav style={glassNav}>
         <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>{appName.toUpperCase()} <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>ADMIN</span></span>
@@ -120,7 +116,7 @@ export default function AdminDashboard() {
         )}
 
         {loading ? (
-          <p style={{ color: 'rgba(255,255,255,0.6)' }}>Loading...</p>
+          <SkeletonList rows={4} />
         ) : tab === 'overview' ? (
           <>
             <h2 style={{ color: C.turquoise, marginBottom: '1.25rem' }}>Overview</h2>
@@ -148,18 +144,18 @@ export default function AdminDashboard() {
                 <button onClick={() => setTab('pending')} style={smallBtn}>Review Now</button>
               </div>
             )}
-            <PlatformStats />
+            <ErrorBoundary section><PlatformStats /></ErrorBoundary>
           </>
         ) : tab === 'links' ? (
-          <LinkRequests onChanged={load} />
+          <ErrorBoundary section><LinkRequests onChanged={load} /></ErrorBoundary>
         ) : tab === 'resources' ? (
-          <AdminResources />
+          <ErrorBoundary section><AdminResources /></ErrorBoundary>
         ) : tab === 'broadcast' ? (
-          <AdminBroadcast />
+          <ErrorBoundary section><AdminBroadcast /></ErrorBoundary>
         ) : tab === 'brand' ? (
-          <WhiteLabelManager />
+          <ErrorBoundary section><WhiteLabelManager /></ErrorBoundary>
         ) : tab === 'pt' ? (
-          <AdminParentTeacher />
+          <ErrorBoundary section><AdminParentTeacher /></ErrorBoundary>
         ) : tab === 'events' ? (
           <div style={{ ...glassCard, padding: '1.25rem' }}>
             <h3 style={{ color: C.turquoise, fontSize: '1.05rem', marginBottom: '0.5rem' }}>Platform-wide events</h3>
