@@ -13,6 +13,24 @@ export default defineConfig(({ mode }) => {
   try { apiOrigin = env.VITE_API_URL ? new URL(env.VITE_API_URL).origin : null } catch { /* ignore */ }
 
   return {
+    // Phase 28: split the bundle so people only download what they use. React, the router and Supabase are
+    // separate (and cache well across deploys); each role's pages sit in their own chunk.
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (/node_modules\/(react-router|react-router-dom|@remix-run)\//.test(id)) return 'router'
+              if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react'
+              if (/node_modules\/@supabase\//.test(id)) return 'supabase'
+              return undefined
+            }
+            const role = id.match(/\/src\/pages\/(student|teacher|parent|principal|tutor|schoolmember|admin)\//)
+            return role ? `role-${role[1]}` : undefined
+          },
+        },
+      },
+    },
     plugins: [
       react(),
       VitePWA({
