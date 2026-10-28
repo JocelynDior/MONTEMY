@@ -7,6 +7,7 @@ import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../compon
 import { LineChart } from '../../components/charts/charts'
 import TimetableBoard from '../../components/timetable/TimetableBoard'
 import { glassCard, glassBtn, C } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const TABS = ['Subjects', 'Schedule', 'Homework', 'Progress']
 const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
@@ -180,7 +181,7 @@ export default function StudentAcademics() {
         ))}
       </div>
 
-      {loading && <p style={muted}>Loading...</p>}
+      {loading && <SkeletonList />}
 
       {error && (
         <div style={{ ...panel, borderColor: 'rgba(255,80,80,0.4)' }}>
