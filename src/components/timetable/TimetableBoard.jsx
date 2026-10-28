@@ -5,6 +5,7 @@ import { glassInput } from '../../styles/glass'
 import { Chip, ErrorBox, ghostBtn, muted, panel, smallBtn } from '../parent/parentUi'
 import LessonEditor from './LessonEditor'
 import { DAY_NAMES, addDays, eventsOn, fmtTerm, holidayOn, mondayOf, subjectColor, weekLabel } from './ttUtils'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const PRINT_CSS = `
 @media print {
@@ -265,7 +266,7 @@ function Board({ meta }) {
 // Loads what the board needs, then draws it. Used on every role's schedule page.
 export default function TimetableBoard() {
   const { data: meta, loading, error, reload } = useApiData('/api/timetable/meta')
-  if (loading) return <p style={muted}>Loading...</p>
+  if (loading) return <SkeletonList />
   if (error) return <ErrorBox message={error} onRetry={reload} />
   if (!meta) return null
   return <Board meta={meta} />
