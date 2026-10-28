@@ -6,6 +6,7 @@ import { Chip, ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '..
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { glassInput } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const dangerBtn = { ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }
 const ROLES = [
@@ -76,7 +77,7 @@ export default function AdminOrgDetail() {
       </div>
 
       {error && <ErrorBox message={error} onRetry={reload} />}
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
       {notice && <p role="status" style={{ color: '#7CFC9A', fontSize: '0.9rem', marginBottom: '1rem' }}>{notice}</p>}
       {actionError && <p role="alert" style={{ color: '#ffb3b3', fontSize: '0.9rem', marginBottom: '1rem' }}>{actionError}</p>}
 
