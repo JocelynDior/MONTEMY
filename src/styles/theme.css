@@ -13,3 +13,41 @@
   --color-bg-dark: #001A35;
   --color-bg-dark-rgb: 0, 26, 53;
 }
+
+/* ---------- Phase 28: polish ---------- */
+
+/* Phones: nothing should push the page wider than the screen, and media never overflows */
+html, body { max-width: 100%; overflow-x: hidden; }
+img, video, svg { max-width: 100%; }
+body { -webkit-tap-highlight-color: transparent; }
+
+/* Keyboard users get a clear focus ring everywhere */
+:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+/* Loading placeholders (components/shared/Skeleton.jsx) */
+@keyframes sk-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.sk {
+  background: linear-gradient(90deg, rgba(255,255,255,0.06) 25%, rgba(255,255,255,0.14) 50%, rgba(255,255,255,0.06) 75%);
+  background-size: 200% 100%;
+  animation: sk-shimmer 1.6s ease-in-out infinite;
+}
+
+/* Short fade when moving between pages (App.jsx) */
+@keyframes page-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.page-fade { animation: page-fade-in 0.22s ease-out; }
+
+/* Same hover and press feel on every card and button */
+.glass { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+@media (hover: hover) {
+  .glass:hover { transform: translateY(-2px); }
+}
+button { transition: transform 0.12s ease, opacity 0.15s ease, background-color 0.15s ease; }
+button:not(:disabled):active { transform: scale(0.98); }
+
+/* People who ask their device for less motion get none */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
