@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { glassCard, glassBtn, addRipple, C } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const smallBtn = { ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSize: '0.85rem', margin: 0 }
 const rejectBtn = { ...smallBtn, background: 'transparent', color: '#ff8a8a', border: '1px solid rgba(255,80,80,0.5)', boxShadow: 'none' }
@@ -55,7 +56,7 @@ export default function LinkRequests({ onChanged }) {
       )}
 
       {loading ? (
-        <p style={muted}>Loading...</p>
+        <SkeletonList />
       ) : requests.length === 0 ? (
         <div className="glass" style={{ ...glassCard, padding: '2rem', textAlign: 'center', color: 'rgba(255,255,255,0.7)' }}>
           {filter === 'pending' ? 'No link requests are waiting.' : filter === 'accepted' ? 'No parents are linked yet.' : 'No declined requests.'}
