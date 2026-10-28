@@ -7,6 +7,7 @@ import { Chip, ErrorBox, muted, panel, panelTitle } from '../../components/paren
 import { useParentChildren } from '../../hooks/useParentChildren'
 import { useApiData } from '../../hooks/useApiData'
 import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const TABS = ['Overview', 'Homework', 'Grades', 'Tutoring']
 
@@ -137,7 +138,7 @@ function ChildReport({ childId }) {
       </div>
 
       {tab === 'Tutoring' && <ChildTutoring childId={childId} />}
-      {tab !== 'Tutoring' && loading && <p style={muted}>Loading...</p>}
+      {tab !== 'Tutoring' && loading && <SkeletonList />}
       {tab !== 'Tutoring' && error && <ErrorBox message={error} onRetry={reload} />}
       {tab !== 'Tutoring' && data && (
         <>
@@ -155,7 +156,7 @@ export default function ParentMyChild() {
 
   return (
     <StudentPage title="My Child" icon="👶" backPath="/parent/dashboard">
-      {loading && <p style={muted}>Loading...</p>}
+      {loading && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
 
       {!loading && !error && (
