@@ -4,6 +4,7 @@ import { useApiData } from '../../hooks/useApiData'
 import { glassInput } from '../../styles/glass'
 import { Chip, ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '../parent/parentUi'
 import { fmtTerm } from './ttUtils'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const label = { display: 'block', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', marginBottom: '0.3rem' }
 const EMPTY = { title: '', kind: 'term', startDate: '', endDate: '' }
@@ -82,7 +83,7 @@ export default function TermsManager({ canManage }) {
         </div>
       )}
 
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
       {data && data.terms.length === 0 && <p style={muted}>No term dates or holidays have been added yet.</p>}
       {data && data.terms.map(t => (
