@@ -5,6 +5,7 @@ import { useApiData } from '../../hooks/useApiData'
 import { gradeColor } from '../../components/student/studentUtils'
 import { BarChart } from '../../components/charts/charts'
 import { glassInput } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const th = { textAlign: 'left', padding: '0.5rem 0.75rem', color: 'rgba(255,255,255,0.6)', fontWeight: 600, fontSize: '0.8rem', whiteSpace: 'nowrap' }
 const td = { padding: '0.55rem 0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', whiteSpace: 'nowrap' }
@@ -31,7 +32,7 @@ export default function PrincipalStats() {
 
   return (
     <StudentPage title="School Statistics" icon="📊" backPath="/principal/dashboard" maxWidth={1000}>
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
 
       {data && (
