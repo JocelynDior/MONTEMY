@@ -9,6 +9,7 @@ import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { useAuth } from '../../context/AuthContext'
 import { ROLE_HOME, TIMETABLE_PATH, addDays, dayKey, startOfWeek, toLocalInput } from '../../components/events/eventUtils'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const EMPTY = { title: '', date: '', location: '', type: 'General', description: '' }
 const VIEWS = ['List', 'Month', 'Week']
@@ -99,7 +100,7 @@ export default function Events() {
 
   return (
     <StudentPage title="Events" icon="📅" backPath={home} maxWidth={1000}>
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
 
       {data && (
