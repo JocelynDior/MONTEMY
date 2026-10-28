@@ -6,6 +6,7 @@ import { Chip, ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../componen
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { glassInput } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const dangerBtn = { ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }
 const opt = { color: '#000' }
@@ -75,7 +76,7 @@ export default function AdminOrgs() {
       )}
 
       {error && <ErrorBox message={error} onRetry={reload} />}
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
 
       {data && (orgs.length === 0
         ? <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>No organisations yet. Create the first one to let people sign up.</div>
