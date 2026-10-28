@@ -7,6 +7,7 @@ import StudentPage from '../../components/student/StudentPage'
 import { panel, muted, smallBtn, ghostBtn, Chip, ErrorBox } from '../../components/parent/parentUi'
 import { glassInput, C } from '../../styles/glass'
 import ClassAnnouncement from '../../components/messages/ClassAnnouncement'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const PT_COLOR = '#ffd166'
 
@@ -304,7 +305,7 @@ export default function Messages() {
 
                 <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                   {threadError ? <ErrorBox message={threadError} onRetry={() => openThread(active)} />
-                    : threadLoading ? <p style={muted}>Loading...</p>
+                    : threadLoading ? <SkeletonList />
                     : thread && thread.messages.length === 0 ? <p style={{ ...muted, margin: 'auto' }}>No messages yet. Say hello!</p>
                     : (thread?.messages || []).map(m => (
                       <div key={m.id} style={{ alignSelf: m.fromMe ? 'flex-end' : 'flex-start', maxWidth: '78%' }}>
