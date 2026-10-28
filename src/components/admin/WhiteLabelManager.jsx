@@ -6,6 +6,7 @@ import { buildTheme, DEFAULT_BRANDING } from '../../context/BrandingContext'
 import { checkLogoFile, LOGO_ACCEPT } from './OrgForm'
 import { ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '../parent/parentUi'
 import { glassInput } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const label = { display: 'block', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', marginBottom: '0.3rem' }
 
@@ -128,11 +129,11 @@ export default function WhiteLabelManager() {
         {orgs.map(o => <option key={o.id} value={o.id} style={{ color: '#000' }}>{o.name}{o.isActive ? '' : ' (inactive)'}</option>)}
       </select>
 
-      {loading && <p style={muted}>Loading...</p>}
+      {loading && <SkeletonList />}
       {error && !form && <ErrorBox message={error} />}
 
       {form && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem', alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: '1.25rem', alignItems: 'start' }}>
           <div style={panel}>
             <h3 style={panelTitle}>{org?.name || 'Organisation'}</h3>
 
