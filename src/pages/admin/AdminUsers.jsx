@@ -6,6 +6,7 @@ import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { useAuth } from '../../context/AuthContext'
 import { glassInput } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const ROLES = [
   ['student', 'Students'], ['teacher', 'Teachers'], ['parent', 'Parents'], ['principal', 'Principals'],
@@ -153,7 +154,7 @@ export default function AdminUsers() {
       {notice && <p style={{ color: '#7CFC9A', fontSize: '0.9rem', marginBottom: '1rem' }}>{notice}</p>}
       {actionError && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginBottom: '1rem' }}>{actionError}</p>}
       {error && <ErrorBox message={error} onRetry={reload} />}
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
 
       {data && (
         <>
