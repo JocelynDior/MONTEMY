@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useBranding } from '../../context/BrandingContext'
 import { apiFetch, apiStream } from '../../api/apiClient'
-import { BACKGROUND_VIDEO } from '../../config/media'
+import Background from '../../components/shared/Background'
 import { glassCard, glassNav, glassBtn, glassInput, C } from '../../styles/glass'
 
 const MAX_MESSAGES_PER_SESSION = 20
@@ -95,13 +95,7 @@ export default function StudentAiTutor() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', color: 'white' }}>
-      {BACKGROUND_VIDEO ? (
-        <video autoPlay loop muted playsInline style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -1 }}>
-          <source src={BACKGROUND_VIDEO} type="video/mp4" />
-        </video>
-      ) : (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-2) 100%)', zIndex: -1 }} />
-      )}
+      <Background />
 
       <nav style={glassNav}>
         <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>
