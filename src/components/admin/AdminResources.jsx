@@ -4,6 +4,7 @@ import ResourceGrid from '../resources/ResourceGrid'
 import { useApiData } from '../../hooks/useApiData'
 import { apiFetch } from '../../api/apiClient'
 import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
 const opt = { background: '#001F3F' }
@@ -41,7 +42,7 @@ export default function AdminResources() {
 
       {orgId && <ResourceUploadForm key={orgId} orgId={orgId} onUploaded={reload} />}
 
-      {loading ? <p style={muted}>Loading...</p> : error ? (
+      {loading ? <SkeletonList /> : error ? (
         <div style={{ ...glassCard, padding: '1rem 1.25rem', borderColor: 'rgba(255,80,80,0.4)' }}>
           <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
           <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
