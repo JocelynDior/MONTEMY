@@ -3,6 +3,7 @@ import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, smallBtn } from '../parent/parentUi'
 import { glassInput, C } from '../../styles/glass'
+import SkeletonList from '../../components/shared/Skeleton'
 
 const MAX = 1500
 
@@ -48,7 +49,7 @@ export default function ClassAnnouncement({ onClose, onSent }) {
       </div>
 
       {error && <ErrorBox message={error} onRetry={reload} />}
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
       {data && classes.length === 0 && <p style={muted}>You haven't added any classes yet. Add one under My Classes first.</p>}
 
       {data && classes.length > 0 && (
