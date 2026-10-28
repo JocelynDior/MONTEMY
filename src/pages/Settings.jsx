@@ -10,6 +10,7 @@ import { supabase } from '../supabase/client'
 import { logout, ROLE_ROUTES } from '../supabase/authHelpers'
 import { SUBJECT_OPTIONS } from '../config/studentOptions'
 import { glassInput } from '../styles/glass'
+import SkeletonList from '../components/shared/Skeleton'
 
 const label = { display: 'block', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', marginBottom: '0.3rem' }
 const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp']
@@ -165,7 +166,7 @@ function StudentSection() {
   return (
     <div style={{ ...panel, marginBottom: '1.25rem' }}>
       <h3 style={panelTitle}>Grade, class and subjects</h3>
-      {loading && !data && <p style={muted}>Loading...</p>}
+      {loading && !data && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
       {p && <StudentProfileForm key={saved ? 'again' : 'first'} initial={{ grade: p.grade || '', subjects: p.subjects || [], letter: p.letter || '' }}
         onSaved={() => { setSaved(s => !s); reload() }} />}
@@ -334,7 +335,7 @@ export default function Settings() {
 
   return (
     <StudentPage title="Settings" icon="⚙️" backPath={ROLE_ROUTES[role] || '/'} maxWidth={760}>
-      {loading && !account && <p style={muted}>Loading...</p>}
+      {loading && !account && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
       {account && (
         <>
