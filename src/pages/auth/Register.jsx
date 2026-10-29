@@ -93,10 +93,10 @@ export default function Register() {
   }, [form.username, isAdmin])
 
   const loadOrgs = async () => {
+    // A public view that only exposes id, name and type of active organisations (see Phase 29 SQL)
     const { data, error } = await supabase
-      .from('organizations')
+      .from('organizations_public')
       .select('id, name, type')
-      .neq('is_active', false)
       .order('name')
     if (error) {
       console.error(error)
