@@ -22,11 +22,17 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
 app.use(express.json())
+// Production domains come from env so going live on a custom domain is a dashboard change, not a code change.
+// ALLOWED_ORIGINS = comma-separated list, e.g. https://montemy.com,https://www.montemy.com
+// ALLOW_VERCEL_PREVIEWS = set to 'false' once the custom domain is live to stop accepting every *.vercel.app site
+const extraOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean)
+const allowVercelPreviews = process.env.ALLOW_VERCEL_PREVIEWS !== 'false'
 app.use(cors({
   origin: [
     'http://localhost:5173',
     'https://montemy.vercel.app',
-    /\.vercel\.app$/,
+    ...extraOrigins,
+    ...(allowVercelPreviews ? [/\.vercel\.app$/] : []),
   ],
   credentials: true,
 }))
