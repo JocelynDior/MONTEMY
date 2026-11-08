@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useBranding } from '../../context/BrandingContext'
-import { glassBtn, glassCard, C } from '../../styles/glass'
+import { glassBtn, glassCard } from '../../styles/glass'
+import { useT } from '../../i18n'
 
 const KEY = 'montemy_install_dismissed'
 const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000
@@ -18,8 +19,9 @@ const isIos = () => /iphone|ipad|ipod/i.test(window.navigator.userAgent)
 // "Add to Home Screen" banner for signed-in users. Chrome and Edge give us an install event;
 // iOS Safari has none, so there we show the manual steps instead.
 export default function InstallPrompt() {
+  const t = useT()
   const { session } = useAuth()
-  const { appName } = useBranding()
+  const { appName, logoUrl } = useBranding()
   const [deferred, setDeferred] = useState(null)
   const [hidden, setHidden] = useState(() => snoozed() || isStandalone())
 
@@ -47,23 +49,28 @@ export default function InstallPrompt() {
     else setHidden(true)
   }
 
+  const small = { ...glassBtn, width: 'auto', margin: 0 }
   return (
-    <div role="dialog" aria-label={`Install ${appName}`}
-      style={{ ...glassCard, position: 'fixed', left: '1rem', right: '1rem', bottom: '1rem', maxWidth: '28rem', margin: '0 auto', padding: '0.9rem 1rem', zIndex: 1000, color: 'white' }}>
-      <div style={{ fontWeight: 700, color: C.turquoise, marginBottom: '0.25rem' }}>Install {appName}</div>
-      {deferred ? (
-        <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.8)', marginBottom: '0.7rem' }}>Add it to your home screen for quick access, like an app.</p>
-      ) : (
-        <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.8)', marginBottom: '0.7rem' }}>
-          In Safari, tap the Share button, then choose <strong>Add to Home Screen</strong>.
+    <div role="dialog" aria-label={t('common.installTitle', { appName })}
+      style={{
+        ...glassCard, position: 'fixed', zIndex: 1000, margin: '0 auto', maxWidth: '28rem', overflow: 'visible',
+        left: 'calc(var(--page-gutter) + var(--safe-left))', right: 'calc(var(--page-gutter) + var(--safe-right))',
+        bottom: 'calc(var(--bottom-bar-h) + var(--safe-bottom) + 0.75rem)',   // sits above the bottom bar
+        padding: 'var(--sp-3) var(--sp-4)', display: 'flex', gap: 'var(--sp-3)', alignItems: 'flex-start',
+      }}>
+      <img src={logoUrl || '/icons/icon-192%20(2).png'} alt="" width="40" height="40"
+        style={{ width: '2.5rem', height: '2.5rem', borderRadius: 'var(--radius-sm)', objectFit: 'cover', flexShrink: 0 }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{t('common.installTitle', { appName })}</div>
+        <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-muted)', marginBottom: '0.7rem' }}>
+          {deferred ? t('common.installText') : t('common.installIos')}
         </p>
-      )}
-      <div style={{ display: 'flex', gap: '0.6rem' }}>
-        {deferred && <button onClick={install} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem', margin: 0 }}>Install</button>}
-        <button onClick={dismiss}
-          style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem', margin: 0, background: 'transparent', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.3)' }}>
-          Not now
-        </button>
+        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+          {deferred && <button onClick={install} style={small}>{t('common.install')}</button>}
+          <button onClick={dismiss} style={{ ...small, background: 'transparent', color: 'var(--fg)', border: '1px solid var(--border-strong)' }}>
+            {t('common.notNow')}
+          </button>
+        </div>
       </div>
     </div>
   )
