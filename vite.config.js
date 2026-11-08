@@ -25,7 +25,7 @@ export default defineConfig(({ mode }) => {
               if (/node_modules\/@supabase\//.test(id)) return 'supabase'
               return undefined
             }
-            const role = id.match(/\/src\/pages\/(student|teacher|parent|principal|tutor|schoolmember|admin)\//)
+            const role = id.match(/\/src\/pages\/(student|teacher|parent|principal|tutor|staff|admin)\//)
             return role ? `role-${role[1]}` : undefined
           },
         },
@@ -39,7 +39,11 @@ export default defineConfig(({ mode }) => {
         manifest: false,                       // we ship our own public/manifest.json
         includeAssets: ['icons/*.png'],
         workbox: {
+          // The word files in src/i18n/ns/ (all 33 languages) are built as separate .js files and are
+          // matched here, so every language works offline. They are large, so the default 2 MiB per-file
+          // limit is raised: a bigger file would otherwise be silently left out of the offline copy.
           globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api\//],
           cleanupOutdatedCaches: true,
@@ -54,6 +58,16 @@ export default defineConfig(({ mode }) => {
                 cacheableResponse: { statuses: [200] },
               },
             }] : []),
+            {
+              // The Grand Hotel brand font, so the school name keeps its look offline
+              urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\//,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'montemy-fonts',
+                expiration: { maxEntries: 10, maxAgeSeconds: 60 * 60 * 24 * 365 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
             {
               // Public logos and profile photos only (private files use signed links, which are not matched)
               urlPattern: /\/storage\/v1\/object\/public\//,
