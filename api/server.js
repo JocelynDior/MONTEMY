@@ -4,7 +4,11 @@ const cors = require('cors')
 const rateLimit = require('express-rate-limit')
 const crypto = require('crypto')
 const { createClient } = require('@supabase/supabase-js')
-const { GoogleGenAI } = require('@google/genai')
+const fs = require('fs')
+const path = require('path')
+const aiProvider = require('./ai/provider')
+const appKnowledge = require('./ai/appKnowledge')
+const aiTools = require('./ai/tools')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -17,10 +21,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-// Model name lives in an env var so a future Google retirement is a dashboard change, not a code change
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+// The AI service lives in api/ai/provider.js (model name comes from GEMINI_MODEL there).
 
+// Slideshow images arrive as base64 in the JSON body, so that one route gets an 8 MB limit.
+// This must stay ABOVE the general parser: the first parser to read a request body wins.
+app.use('/api/slideshow', express.json({ limit: '8mb' }))
 app.use(express.json())
 // Production domains come from env so going live on a custom domain is a dashboard change, not a code change.
 // ALLOWED_ORIGINS = comma-separated list, e.g. https://montemy.com,https://www.montemy.com
@@ -104,7 +109,7 @@ async function requireAdmin(req, res, next) {
   next()
 }
 
-const ROLE_TABLES = ['students', 'teachers', 'parents', 'principals', 'tutors', 'school_members']
+const ROLE_TABLES = ['students', 'teachers', 'parents', 'principals', 'tutors', 'staff_members']
 
 // Users waiting for admin approval, with their organisation name
 app.get('/api/admin/pending-users', verifyToken, requireAdmin, async (req, res) => {
@@ -312,7 +317,7 @@ function cleanSubjects(input) {
   return out
 }
 
-const ROLE_LIST = ['student', 'teacher', 'parent', 'principal', 'tutor', 'schoolmember']
+const ROLE_LIST = ['student', 'teacher', 'parent', 'principal', 'tutor', 'staff']
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -1660,8 +1665,9 @@ app.get('/api/teacher/progress', verifyToken, teacherLimiter, async (req, res) =
 const MAX_MESSAGE_CHARS = 2000
 const MAX_HISTORY_MESSAGES = 20
 
-function buildSystemPrompt({ name, grade, subjects }) {
+function buildSystemPrompt({ name, grade, subjects, languageName }) {
   return `You are a friendly, patient school tutor on the Montemy education platform.
+Always reply in ${languageName || 'English'}, even if the student writes in another language, unless they ask you to switch.
 ${name ? `The student's first name is ${String(name).split(' ')[0]}. ` : ''}They are in grade ${grade ?? 'unknown'}.
 Their subjects are: ${subjects.length ? subjects.join(', ') : 'general school subjects'}.
 
@@ -1688,21 +1694,17 @@ app.post('/api/ai-tutor', verifyToken, aiLimiter, async (req, res) => {
     const ctx = await getStudentContext(req.user)
     if (!ctx) return res.status(403).json({ error: 'The AI Tutor is for student accounts only' })
 
-    // Clean the client-supplied history: valid roles/strings only, most recent N, must start with a user turn
-    let past = (Array.isArray(history) ? history : [])
-      .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
-      .slice(-MAX_HISTORY_MESSAGES)
-      .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content.slice(0, 4000) }] }))
-    while (past.length && past[0].role !== 'user') past.shift()
+    // The tutor answers in the language the user chose in Settings
+    const { data: langRow } = await supabase.from('users').select('preferred_language').eq('id', req.user.id).maybeSingle()
+    const languageName = appKnowledge.languageName(langRow?.preferred_language)
 
-    const stream = await ai.models.generateContentStream({
-      model: GEMINI_MODEL,
-      contents: [...past, { role: 'user', parts: [{ text: message.trim() }] }],
-      config: {
-        systemInstruction: buildSystemPrompt(ctx),
-        maxOutputTokens: 1024,
-        temperature: 0.7,
-      },
+    // Most recent turns only; the provider drops invalid entries and makes sure the chat starts with a user turn
+    const past = (Array.isArray(history) ? history : []).slice(-MAX_HISTORY_MESSAGES)
+    const stream = aiProvider.streamChat({
+      system: buildSystemPrompt({ ...ctx, languageName }),
+      messages: [...past, { role: 'user', content: message.trim() }],
+      maxOutputTokens: 1024,
+      temperature: 0.7,
     })
 
     let aborted = false
@@ -1710,21 +1712,18 @@ app.post('/api/ai-tutor', verifyToken, aiLimiter, async (req, res) => {
 
     let wrote = false
     try {
-      for await (const chunk of stream) {
+      for await (const text of stream) {
         if (aborted) break
-        const text = chunk.text
-        if (text) {
-          if (!wrote) {
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-            res.setHeader('Cache-Control', 'no-cache')
-            res.setHeader('X-Accel-Buffering', 'no')
-            wrote = true
-          }
-          res.write(text)
+        if (!wrote) {
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+          res.setHeader('Cache-Control', 'no-cache')
+          res.setHeader('X-Accel-Buffering', 'no')
+          wrote = true
         }
+        res.write(text)
       }
     } catch (streamErr) {
-      console.error('Gemini stream error:', streamErr)
+      console.error('AI stream error:', streamErr)
       if (!wrote) return res.status(500).json({ error: 'The AI tutor is unavailable right now. Please try again.' })
       res.write('\n\n(The reply was interrupted. Please try again.)')
     }
@@ -1735,7 +1734,7 @@ app.post('/api/ai-tutor', verifyToken, aiLimiter, async (req, res) => {
     }
     res.end()
   } catch (err) {
-    console.error('Gemini error:', err)
+    console.error('AI tutor error:', err)
     if (!res.headersSent) res.status(500).json({ error: 'The AI tutor is unavailable right now. Please try again.' })
     else res.end()
   }
@@ -1841,7 +1840,7 @@ function afterReply(label, fn) {
 
 const ROLE_HOME = {
   student: '/student/dashboard', teacher: '/teacher/dashboard', parent: '/parent/dashboard',
-  principal: '/principal/dashboard', tutor: '/tutor/dashboard', schoolmember: '/schoolmember/dashboard',
+  principal: '/principal/dashboard', tutor: '/tutor/dashboard', staff: '/staff/dashboard',
   admin: '/admin/dashboard',
 }
 
@@ -2467,7 +2466,7 @@ app.get('/api/principal/staff', verifyToken, principalLimiter, async (req, res) 
       fetchAllRows(() => supabase.from('users').select('id, name, username, is_verified')
         .eq('org_id', user.org_id).eq('role', 'teacher').order('name').order('id')),
       fetchAllRows(() => supabase.from('users').select('id, name, username, is_verified')
-        .eq('org_id', user.org_id).eq('role', 'schoolmember').order('name').order('id')),
+        .eq('org_id', user.org_id).eq('role', 'staff').order('name').order('id')),
       fetchAllRows(() => supabase.from('classes').select('id, name, grade').eq('org_id', user.org_id).order('id')),
     ])
 
@@ -2475,7 +2474,7 @@ app.get('/api/principal/staff', verifyToken, principalLimiter, async (req, res) 
     const [links, studentRows, memberRows] = await Promise.all([
       fetchIn('teacher_classes', 'teacher_id, class_id', 'teacher_id', teacherUsers.map(t => t.id), ['teacher_id', 'class_id']),
       fetchIn('students', 'class_id', 'class_id', classRows.map(c => c.id)),
-      fetchIn('school_members', 'user_id, department', 'user_id', memberUsers.map(m => m.id), ['user_id']),
+      fetchIn('staff_members', 'user_id, department', 'user_id', memberUsers.map(m => m.id), ['user_id']),
     ])
 
     const studentsInClass = {}
@@ -3002,7 +3001,7 @@ app.get('/api/parent/children/:childId/tutor-sessions', verifyToken, parentLimit
 // ---------- Admin: platform management (Phase 14) ----------
 // Everything here sits behind verifyToken + requireAdmin and uses the service role key, so none of
 // it can be reached from the browser without an admin login.
-const ADMIN_USER_ROLES = ['student', 'teacher', 'parent', 'principal', 'tutor', 'schoolmember', 'admin']
+const ADMIN_USER_ROLES = ['student', 'teacher', 'parent', 'principal', 'tutor', 'staff', 'admin']
 const USERS_PAGE_SIZE = 50
 const EXPORT_MAX_ROWS = 10000
 const SUSPEND_FOR = '876000h'   // about 100 years: effectively "until an admin lifts it"
@@ -3193,7 +3192,7 @@ const ORG_LOGO_BUCKET = 'org-logos'
 const ORG_LOGO_MAX_BYTES = 2 * 1024 * 1024
 const ORG_LOGO_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
 const ORG_COLUMNS = 'id, name, type, address, contact_email, country, specialisation, logo_url, is_active, created_at'
-const ORG_MEMBER_ROLES = ['student', 'teacher', 'parent', 'principal', 'tutor', 'schoolmember']
+const ORG_MEMBER_ROLES = ['student', 'teacher', 'parent', 'principal', 'tutor', 'staff']
 
 const orgAdminLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -4295,7 +4294,7 @@ app.post('/api/resources', verifyToken, resourcesLimiter, async (req, res) => {
 app.get('/api/resources', verifyToken, resourcesLimiter, async (req, res) => {
   try {
     const user = await loadResourceUser(req.user)
-    if (!user || !['student', 'teacher', 'admin'].includes(user.role)) {
+    if (!user || !['student', 'teacher', 'tutor', 'admin'].includes(user.role)) {
       return res.status(403).json({ error: 'You do not have access to study materials.' })
     }
 
@@ -4357,7 +4356,7 @@ app.get('/api/resources/:id/link', verifyToken, resourcesLimiter, async (req, re
   try {
     if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Resource not found.' })
     const user = await loadResourceUser(req.user)
-    if (!user || !['student', 'teacher', 'admin'].includes(user.role)) {
+    if (!user || !['student', 'teacher', 'tutor', 'admin'].includes(user.role)) {
       return res.status(403).json({ error: 'You do not have access to study materials.' })
     }
 
@@ -4517,7 +4516,7 @@ const timetableLimiter = rateLimit({
   message: { error: 'Too many requests. Wait a moment and try again.' },
 })
 
-const TT_ROLES = ['student', 'teacher', 'principal', 'schoolmember']
+const TT_ROLES = ['student', 'teacher', 'principal', 'staff']
 const TT_MAX_DAY = 6          // 1 = Monday ... 6 = Saturday
 const TT_MAX_PERIODS = 12
 const TT_TERM_KINDS = ['term', 'holiday']
@@ -5244,7 +5243,8 @@ const AVATAR_BUCKET = 'avatars'
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
 const AVATAR_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
 const NOTIFY_CATEGORIES = ['academic', 'events', 'messages', 'tutoring']
-const ACCOUNT_COLUMNS = 'id, name, username, role, org_id, is_verified, bio, avatar_url, notification_prefs, deleted_at'
+const ACCOUNT_COLUMNS = 'id, name, username, role, org_id, is_verified, bio, avatar_url, notification_prefs, deleted_at, preferred_language, preferred_theme, avatar_key'
+const THEME_CHOICES = ['system', 'light', 'dark']
 
 async function accountUser(req, res) {
   const { data: user, error } = await supabase.from('users').select(ACCOUNT_COLUMNS).eq('id', req.user.id).maybeSingle()
@@ -5269,9 +5269,11 @@ app.get('/api/account', verifyToken, accountLimiter, async (req, res) => {
     }
 
     let orgName = null
+    let orgType = null   // 'school' or 'tutor' (a tutor firm); the app shows School or Firm wording from this
     if (user.org_id) {
-      const { data: org } = await supabase.from('organizations').select('name').eq('id', user.org_id).maybeSingle()
+      const { data: org } = await supabase.from('organizations').select('name, type').eq('id', user.org_id).maybeSingle()
       orgName = org?.name || null
+      orgType = org?.type || null
     }
     let subjectsTaught = []
     if (user.role === 'teacher') {
@@ -5286,9 +5288,13 @@ app.get('/api/account', verifyToken, accountLimiter, async (req, res) => {
       username: user.username || '',
       role: user.role,
       orgName,
+      orgType,
       isVerified: !!user.is_verified,
       bio: user.bio || '',
       avatarUrl: user.avatar_url || null,
+      avatarKey: user.avatar_key || null,
+      preferredLanguage: user.preferred_language || 'en',
+      preferredTheme: user.preferred_theme || 'system',
       notificationPrefs: prefsWithDefaults(user.notification_prefs),
       subjectsTaught,
     })
@@ -5315,6 +5321,19 @@ app.put('/api/account/profile', verifyToken, accountLimiter, async (req, res) =>
       const bio = typeof body.bio === 'string' ? body.bio.trim() : ''
       if (bio.length > 500) return res.status(400).json({ error: 'Your bio is too long (max 500 characters).' })
       patch.bio = bio || null
+    }
+    // Preferences (Settings screen and the Help assistant). Validated against fixed lists.
+    if (body.preferredLanguage !== undefined) {
+      if (!appKnowledge.LANGUAGE_CODES.includes(body.preferredLanguage)) return res.status(400).json({ error: 'That language is not available.' })
+      patch.preferred_language = body.preferredLanguage
+    }
+    if (body.preferredTheme !== undefined) {
+      if (!THEME_CHOICES.includes(body.preferredTheme)) return res.status(400).json({ error: 'Choose Dark, Light or Default.' })
+      patch.preferred_theme = body.preferredTheme
+    }
+    if (body.avatarKey !== undefined) {
+      if (body.avatarKey !== null && !aiTools.AVATAR_KEYS.includes(body.avatarKey)) return res.status(400).json({ error: 'That avatar does not exist.' })
+      patch.avatar_key = body.avatarKey
     }
     if (!Object.keys(patch).length && body.subjectsTaught === undefined) return res.status(400).json({ error: 'Nothing to update.' })
 
@@ -5605,6 +5624,45 @@ app.delete('/api/admin/orgs/:id/branding/logo', verifyToken, requireAdmin, orgAd
   }
 })
 
+// ---------- Route loader (v1.2) ----------
+// Every .js file in api/routes/ is mounted here, so new endpoints are new files and this file never
+// needs editing again. A route file exports one function:
+//
+//   module.exports = (app, ctx) => { app.get('/api/thing', ctx.verifyToken, async (req, res) => { ... }) }
+//
+// ctx gives it what server.js already has (database, login check, rate limiter, helpers, AI).
+// Files starting with _ or . are skipped. Files load in alphabetical order. A file that fails to load
+// is logged and skipped so one broken route file cannot take the whole API down.
+// This block must stay at the bottom, after everything it hands over has been defined.
+const routeContext = {
+  express, supabase, rateLimit, crypto,
+  verifyToken, requireAdmin, adminOrFail, principalOrFail, tutorOrFail,
+  cronSecretMatches, cronLimiter,
+  fetchAllRows, fetchIn, UUID_RE, isUuid, displayName,
+  notifyUser, notifyMany, afterReply, orgRecipientIds, usersById,
+  ROLE_LIST, ADMIN_USER_ROLES, ORG_MEMBER_ROLES,
+  ai: { provider: aiProvider, knowledge: appKnowledge, tools: aiTools },
+}
+
+function loadRouteFiles(dir) {
+  if (!fs.existsSync(dir)) return []
+  const loaded = []
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.js') && !f.startsWith('_') && !f.startsWith('.')).sort()
+  for (const file of files) {
+    try {
+      const register = require(path.join(dir, file))
+      if (typeof register !== 'function') throw new Error('it must export a function (app, ctx)')
+      register(app, routeContext)
+      loaded.push(file)
+    } catch (err) {
+      console.error(`Route file ${file} was not loaded:`, err)
+    }
+  }
+  return loaded
+}
+
+const loadedRoutes = loadRouteFiles(path.join(__dirname, 'routes'))
+
 app.listen(PORT, () => {
-  console.log(`Montemy API running on port ${PORT}`)
+  console.log(`Montemy API running on port ${PORT}${loadedRoutes.length ? ` (routes: ${loadedRoutes.join(', ')})` : ''}`)
 })
