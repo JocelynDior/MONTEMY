@@ -1,28 +1,139 @@
-/* Default Montemy theme. BrandingProvider overrides these at runtime per organisation. */
+/* ==========================================================================
+   Montemy theme: black and white only.
+   Pages must use these tokens and never hard-coded colours.
+   Dark, Light and Default (follows the phone) are switched by <html data-theme="dark|light">,
+   which context/ThemeContext.jsx sets before the first paint.
+   ========================================================================== */
+
+/* ---------- Fonts, sizes and spacing (same in every theme) ---------- */
 :root {
-  --color-primary: #40E0D0;
-  --color-primary-rgb: 64, 224, 208;
-  --color-primary-dark: #20B2AA;
-  --color-primary-dark-rgb: 32, 178, 170;
-  --color-bg: #001F3F;
-  --color-bg-rgb: 0, 31, 63;
-  --color-bg-2: #003366;
-  --color-bg-2-rgb: 0, 51, 102;
-  --color-bg-light: #0A2A4A;
-  --color-bg-light-rgb: 10, 42, 74;
-  --color-bg-dark: #001A35;
-  --color-bg-dark-rgb: 0, 26, 53;
+  /* Body text uses the phone's own font so it appears instantly. Grand Hotel is the school-name font. */
+  --font-body: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif;
+  --font-brand: 'Grand Hotel', 'Brush Script MT', cursive;
+
+  /* Fluid type scale: grows with the screen between 320px and 1280px wide */
+  --fs-xs: clamp(0.72rem, 0.70rem + 0.10vw, 0.78rem);
+  --fs-sm: clamp(0.80rem, 0.77rem + 0.15vw, 0.90rem);
+  --fs-md: clamp(0.95rem, 0.92rem + 0.20vw, 1.05rem);
+  --fs-lg: clamp(1.05rem, 1.00rem + 0.35vw, 1.25rem);
+  --fs-xl: clamp(1.25rem, 1.10rem + 0.70vw, 1.60rem);
+  --fs-2xl: clamp(1.50rem, 1.25rem + 1.10vw, 2.10rem);
+  --fs-3xl: clamp(1.90rem, 1.40rem + 2.00vw, 3.00rem);
+
+  /* Fluid spacing scale */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: clamp(0.6rem, 0.5rem + 0.5vw, 0.85rem);
+  --sp-4: clamp(0.85rem, 0.7rem + 0.8vw, 1.25rem);
+  --sp-5: clamp(1.1rem, 0.9rem + 1vw, 1.75rem);
+  --sp-6: clamp(1.5rem, 1.1rem + 2vw, 2.5rem);
+  --page-gutter: clamp(0.75rem, 4vw, 2rem);
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-pill: 999px;
+
+  /* Usable screen size. styles/viewport.js replaces these with the measured values before the first paint. */
+  --app-height: 100vh;
+  --app-width: 100vw;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Height of the fixed bottom bar. The bottom bar sets this while it is on screen (0 when there is none). */
+  --bottom-bar-h: 0px;
+}
+@supports (height: 100dvh) {
+  :root { --app-height: 100dvh; }
 }
 
-/* ---------- Phase 28: polish ---------- */
+/* ---------- Colour tokens ---------- */
+/* Dark is the base. Light replaces it. With no data-theme yet (before the script runs), the phone decides. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000;           --bg-rgb: 0, 0, 0;
+  --surface: #0f0f0f;      --surface-rgb: 15, 15, 15;
+  --surface-2: #1c1c1c;    --surface-2-rgb: 28, 28, 28;
+  --border: #333333;
+  --border-strong: #666666;
+  --fg: #ffffff;           --fg-rgb: 255, 255, 255;
+  --fg-muted: #b3b3b3;
+  --fg-subtle: #8c8c8c;
+  --on-fg: #000000;        /* text on top of a --fg coloured fill (buttons, selected tabs) */
+  --overlay: rgba(0, 0, 0, 0.7);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;           --bg-rgb: 255, 255, 255;
+  --surface: #f5f5f5;      --surface-rgb: 245, 245, 245;
+  --surface-2: #e8e8e8;    --surface-2-rgb: 232, 232, 232;
+  --border: #d4d4d4;
+  --border-strong: #8a8a8a;
+  --fg: #000000;           --fg-rgb: 0, 0, 0;
+  --fg-muted: #4d4d4d;
+  --fg-subtle: #6b6b6b;
+  --on-fg: #ffffff;
+  --overlay: rgba(255, 255, 255, 0.75);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #ffffff;         --bg-rgb: 255, 255, 255;
+    --surface: #f5f5f5;    --surface-rgb: 245, 245, 245;
+    --surface-2: #e8e8e8;  --surface-2-rgb: 232, 232, 232;
+    --border: #d4d4d4;
+    --border-strong: #8a8a8a;
+    --fg: #000000;         --fg-rgb: 0, 0, 0;
+    --fg-muted: #4d4d4d;
+    --fg-subtle: #6b6b6b;
+    --on-fg: #ffffff;
+    --overlay: rgba(255, 255, 255, 0.75);
+  }
+}
+
+/* Old names. Pages that have not been moved to the tokens yet still use these, so they alias to the
+   black and white tokens and the whole app is already black and white. Delete once no file uses them. */
+:root {
+  --color-primary: var(--fg);          --color-primary-rgb: var(--fg-rgb);
+  --color-primary-dark: var(--fg-muted); --color-primary-dark-rgb: var(--fg-rgb);
+  --color-bg: var(--bg);               --color-bg-rgb: var(--bg-rgb);
+  --color-bg-2: var(--surface);        --color-bg-2-rgb: var(--surface-rgb);
+  --color-bg-light: var(--surface-2);  --color-bg-light-rgb: var(--surface-2-rgb);
+  --color-bg-dark: var(--bg);          --color-bg-dark-rgb: var(--bg-rgb);
+}
+
+/* ---------- Base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
 
 /* Phones: nothing should push the page wider than the screen, and media never overflows */
 html, body { max-width: 100%; overflow-x: hidden; }
+html { background: var(--bg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: var(--app-height);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.5;
+  text-align: start;
+  overflow-wrap: break-word;
+  -webkit-tap-highlight-color: transparent;
+}
 img, video, svg { max-width: 100%; }
-body { -webkit-tap-highlight-color: transparent; }
+h1, h2, h3, h4, h5, h6 { overflow-wrap: anywhere; }
+input, select, textarea, button { font: inherit; color: inherit; }
+::placeholder { color: var(--fg-subtle); opacity: 1; }
+::selection { background: var(--fg); color: var(--bg); }
+
+/* Right-to-left languages (Arabic, Urdu): the page direction comes from <html dir>.
+   Arrows and chevrons carry the icon-flip class and mirror. */
+[dir="rtl"] .icon-flip { transform: scaleX(-1); }
 
 /* Keyboard users get a clear focus ring everywhere */
-:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 
 /* Loading placeholders (components/shared/Skeleton.jsx) */
 @keyframes sk-shimmer {
@@ -30,10 +141,13 @@ body { -webkit-tap-highlight-color: transparent; }
   100% { background-position: -200% 0; }
 }
 .sk {
-  background: linear-gradient(90deg, rgba(255,255,255,0.06) 25%, rgba(255,255,255,0.14) 50%, rgba(255,255,255,0.06) 75%);
+  background: linear-gradient(90deg, rgba(var(--fg-rgb), 0.06) 25%, rgba(var(--fg-rgb), 0.14) 50%, rgba(var(--fg-rgb), 0.06) 75%);
   background-size: 200% 100%;
   animation: sk-shimmer 1.6s ease-in-out infinite;
 }
+
+/* Spinner (components/shared/LoadingScreen.jsx) */
+@keyframes montemy-spin { to { transform: rotate(360deg); } }
 
 /* Short fade when moving between pages (App.jsx) */
 @keyframes page-fade-in { from { opacity: 0; } to { opacity: 1; } }
