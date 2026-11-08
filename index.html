@@ -4,14 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Montemy: the all-in-one education platform." />
-    <meta name="theme-color" content="#001F3F" />
+    <meta name="color-scheme" content="dark light" />
+    <!-- Browser bar colour: black or white to match the app (context/ThemeContext.jsx keeps these in step) -->
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="icon" type="image/png" href="/icons/icon-192%20(1).png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon%20(1).png" />
+    <link rel="icon" type="image/png" href="/icons/icon-192%20(2).png" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Montemy" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Brand font, used only for the school name. Body text uses the phone's own font. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Grand+Hotel&display=swap" />
+    <!-- Sets the saved theme before the first paint so a Dark or Light choice never flashes the other one -->
+    <script>
+      try {
+        var t = localStorage.getItem('montemy_theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    </script>
     <title>Montemy</title>
   </head>
   <body>
