@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 
 import { AuthProvider } from './context/AuthContext'
 import { BrandingProvider } from './context/BrandingContext'
+import { OrgProvider } from './context/OrgContext'
 import { ProtectedRoute, RoleRoute, PublicOnlyRoute } from './components/routing/RouteGuards'
 
 import Landing from './pages/auth/Landing'
@@ -74,6 +75,7 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <BrandingProvider>
+        <OrgProvider>
         <OfflineBanner />
         <InstallPrompt />
         <AppRoutes>
@@ -132,9 +134,10 @@ export default function App() {
           <Route path="/tutor/students" element={guard('tutor', <TutorStudents />)} />
           <Route path="/tutor/sessions" element={guard('tutor', <TutorSessions />)} />
 
-          {/* School Member */}
-          <Route path="/schoolmember/dashboard" element={guard('schoolmember', <SchoolMemberDashboard />)} />
-          <Route path="/schoolmember/schedules" element={guard('schoolmember', <SchedulePage backPath="/schoolmember/dashboard" />)} />
+          {/* Staff Member (was School Member). Phase 7 replaces the dashboard page; Phase 10 finishes the wiring. */}
+          <Route path="/staff/dashboard" element={guard('staff', <SchoolMemberDashboard />)} />
+          <Route path="/staff/schedules" element={guard('staff', <SchedulePage backPath="/staff/dashboard" />)} />
+          <Route path="/schoolmember/*" element={<Navigate to="/staff/dashboard" replace />} />
 
           {/* Admin */}
           <Route path="/admin/dashboard" element={guard('admin', <AdminDashboard />)} />
@@ -148,6 +151,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </AppRoutes>
+        </OrgProvider>
         </BrandingProvider>
       </AuthProvider>
     </BrowserRouter>
