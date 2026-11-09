@@ -2,7 +2,13 @@ import React, { createContext, useContext, useEffect, useLayoutEffect, useState 
 import { apiFetch } from '../api/apiClient'
 import { useAuth } from './AuthContext'
 
+// The app is black and white, so a school no longer brings its own colours. A white-label school keeps its own
+// app name and logo: they show in the browser tab, on the installed app and wherever the app name is written.
+// (The browser bar colour comes from ThemeContext.)
+
 // ---- Defaults (Montemy) ----
+// primaryColor and bgColor stay in the object only because the admin Branding screen still previews them; nothing
+// here applies them to the page. Phase 8 removes them together with the colour pickers.
 export const DEFAULT_BRANDING = {
   appName: 'Montemy',
   primaryColor: '#40E0D0',
@@ -14,7 +20,7 @@ export const DEFAULT_BRANDING = {
 const CACHE_KEY = 'montemy_branding'
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
 
-// ---- Colour helpers ----
+// ---- Colour helpers (used only by the admin Branding preview, through buildTheme) ----
 const hexToRgb = (hex) => {
   let h = hex.replace('#', '')
   if (h.length === 3) h = h.split('').map(c => c + c).join('')
@@ -27,14 +33,14 @@ const scale = (rgb, f) => rgb.map(v => clamp(v * f))
 const mixWhite = (rgb, t) => rgb.map(v => clamp(v + (255 - v) * t))
 const rgbStr = (rgb) => rgb.map(Math.round).join(', ')
 
-// Turns a branding object into the full set of CSS variables
+// Turns a branding object into a set of CSS variables. The app itself no longer uses this; the admin Branding
+// screen calls it to preview a colour choice until Phase 8 removes the colour pickers.
 export function buildTheme(b) {
   const p = hexToRgb(b.primaryColor)
   const bg = hexToRgb(b.bgColor)
   const defaultPrimary = b.primaryColor.toLowerCase() === DEFAULT_BRANDING.primaryColor.toLowerCase()
   const defaultBg = b.bgColor.toLowerCase() === DEFAULT_BRANDING.bgColor.toLowerCase()
 
-  // Default colours use the exact original shades; custom colours get derived shades
   const pDark = defaultPrimary ? [32, 178, 170] : scale(p, 0.8)
   const bg2 = defaultBg ? [0, 51, 102] : scale(bg, 1.62)
   const bgLight = defaultBg ? [10, 42, 74] : mixWhite(bg, 0.05)
@@ -72,19 +78,20 @@ export function normalizeBranding(raw) {
   }
 }
 
-// Writes the theme to the page: CSS variables, tab title, theme colour, favicon
-function applyTheme(b) {
-  const root = document.documentElement
-  Object.entries(buildTheme(b)).forEach(([k, v]) => root.style.setProperty(k, v))
+const isCustom = (b) => b.appName !== DEFAULT_BRANDING.appName || !!b.logoUrl
 
+// ---- The real icon files in public/icons (the names have spaces, so they are written URL-encoded) ----
+const ICON_192 = '/icons/icon-192%20(2).png'
+const ICON_512 = '/icons/icon-512%20(2).png'
+const APPLE_ICON = '/icons/apple-touch-icon%20(1).png'
+
+// Writes the school's name and logo to the page: tab title, favicon, home-screen icon and installed-app manifest
+function applyBranding(b) {
   document.title = b.appName
-
-  const meta = document.querySelector('meta[name="theme-color"]')
-  if (meta) meta.setAttribute('content', b.bgColor)
 
   applyManifest(b)
   const appleIcon = document.querySelector('link[rel="apple-touch-icon"]')
-  if (appleIcon) appleIcon.setAttribute('href', b.logoUrl || '/icons/apple-touch-icon.png')
+  if (appleIcon) appleIcon.setAttribute('href', b.logoUrl || APPLE_ICON)
   const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]')
   if (appleTitle) appleTitle.setAttribute('content', b.appName)
 
@@ -109,30 +116,27 @@ let manifestUrl = null
 function applyManifest(b) {
   const link = document.querySelector('link[rel="manifest"]')
   if (!link) return
-  const custom = b.appName !== DEFAULT_BRANDING.appName || !!b.logoUrl
-    || b.primaryColor.toLowerCase() !== DEFAULT_BRANDING.primaryColor.toLowerCase()
-    || b.bgColor.toLowerCase() !== DEFAULT_BRANDING.bgColor.toLowerCase()
 
   if (manifestUrl) { URL.revokeObjectURL(manifestUrl); manifestUrl = null }
-  if (!custom) { link.setAttribute('href', DEFAULT_MANIFEST_HREF); return }
+  if (!isCustom(b)) { link.setAttribute('href', DEFAULT_MANIFEST_HREF); return }
 
   const origin = window.location.origin
   const icons = b.logoUrl
     ? [{ src: b.logoUrl, sizes: '512x512', type: 'image/png', purpose: 'any' }]
     : [
-        { src: `${origin}/icons/icon-192%20(1).png`, sizes: '192x192', type: 'image/png', purpose: 'any' },
-        { src: `${origin}/icons/icon-512%20(1).png`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: `${origin}${ICON_192}`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: `${origin}${ICON_512}`, sizes: '512x512', type: 'image/png', purpose: 'any' },
       ]
   const manifest = {
     id: `${origin}/`, name: b.appName, short_name: b.appName.slice(0, 12),
     start_url: `${origin}/`, scope: `${origin}/`, display: 'standalone',
-    theme_color: b.bgColor, background_color: b.bgColor, icons,
+    theme_color: '#000000', background_color: '#000000', icons,
   }
   manifestUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }))
   link.setAttribute('href', manifestUrl)
 }
 
-// Last-used branding is cached so a refresh doesn't flash the default colours
+// Last-used branding is cached so a refresh doesn't flash the default name
 const readCache = () => {
   try { return normalizeBranding(localStorage.getItem(CACHE_KEY)) } catch { return DEFAULT_BRANDING }
 }
@@ -146,7 +150,7 @@ export function BrandingProvider({ children }) {
   const [branding, setBranding] = useState(readCache)
 
   // Apply before paint whenever branding changes
-  useLayoutEffect(() => { applyTheme(branding) }, [branding])
+  useLayoutEffect(() => { applyBranding(branding) }, [branding])
 
   const userId = session?.user?.id
   const orgId = profile?.org_id
@@ -179,16 +183,12 @@ export function BrandingProvider({ children }) {
         writeCache(next)
       })
       .catch((err) => {
-        if (!cancelled) console.warn('Could not load branding:', err.message) // keep current theme
+        if (!cancelled) console.warn('Could not load branding:', err.message) // keep current branding
       })
     return () => { cancelled = true }
   }, [initializing, loading, userId, orgId])
 
-  const isWhiteLabel =
-    branding.appName !== DEFAULT_BRANDING.appName ||
-    branding.primaryColor.toLowerCase() !== DEFAULT_BRANDING.primaryColor.toLowerCase() ||
-    branding.bgColor.toLowerCase() !== DEFAULT_BRANDING.bgColor.toLowerCase() ||
-    !!branding.logoUrl
+  const isWhiteLabel = isCustom(branding)
 
   return (
     <BrandingContext.Provider value={{ branding, ...branding, isWhiteLabel }}>
