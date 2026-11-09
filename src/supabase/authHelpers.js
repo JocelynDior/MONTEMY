@@ -7,7 +7,7 @@ export const ROLE_ROUTES = {
   parent: '/parent/dashboard',
   principal: '/principal/dashboard',
   tutor: '/tutor/dashboard',
-  schoolmember: '/schoolmember/dashboard',
+  staff: '/staff/dashboard',
   admin: '/admin/dashboard',
 }
 
@@ -21,11 +21,12 @@ export function homeRouteFor(profile) {
 }
 
 // Reads the signed-in user's profile row from the users table.
-// Returns { role, is_verified, name, org_id, avatar_url } or null if there is no profile.
+// Returns { role, is_verified, is_suspended, name, org_id, avatar_url, avatar_key, preferred_language, preferred_theme }
+// or null if there is no profile.
 export async function getProfile(userId) {
   const { data, error } = await supabase
     .from('users')
-    .select('role, is_verified, name, org_id, avatar_url')
+    .select('role, is_verified, is_suspended, name, org_id, avatar_url, avatar_key, preferred_language, preferred_theme')
     .eq('id', userId)
     .maybeSingle()
   if (error) {
@@ -38,6 +39,8 @@ export async function getProfile(userId) {
 export async function logout() {
   await supabase.auth.signOut()
   localStorage.removeItem('montemy_role')
+  // The cached organisation (name, logo and slideshow) belongs to the last user, so it goes with them
+  localStorage.removeItem('montemy_org')
   // Offline copies of the last user's data must not be readable by the next person on this device
   try { await window.caches?.delete('montemy-api') } catch { /* ignore */ }
 }
