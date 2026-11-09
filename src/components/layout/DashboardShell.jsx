@@ -1,96 +1,70 @@
-import React from 'react'
+import React, { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { logout } from '../../supabase/authHelpers'
 import { useAuth } from '../../context/AuthContext'
-import { useBranding } from '../../context/BrandingContext'
-import MessagesBell from './MessagesBell'
-import NotificationBell from './NotificationBell'
-import Background from '../../components/shared/Background'
-import ErrorBoundary from '../../components/shared/ErrorBoundary'
-import { SkeletonCards } from '../../components/shared/Skeleton'
-import { glassCard, glassNav, glassBtn, addRipple, C } from '../../styles/glass'
+import { useOrgTerms } from '../../hooks/useOrgTerms'
+import { useT } from '../../i18n'
+import { PAGE_ICONS, featureLabelKey, featuresFor, isLocked } from '../../config/roleFeatures'
+import Background from '../shared/Background'
+import ErrorBoundary from '../shared/ErrorBoundary'
+import { SkeletonCards } from '../shared/Skeleton'
+import TopBar from './TopBar'
+import Slideshow from './Slideshow'
+import FeatureGrid from './FeatureGrid'
+import BottomBar from './BottomBar'
+import SideDrawer from './SideDrawer'
 
-// Shared dashboard layout used by student, teacher, parent, principal,
-// tutor and school member dashboards.
-// Props: role (display label), cards [{ icon, title, description, path, requiresVerification }],
-// children (optional content shown above the cards, e.g. live summary panels)
-// (the old `collection` prop is no longer needed and is ignored)
-export default function DashboardShell({ role, cards = [], children }) {
+// The frame every role's home screen shares: top bar, school slideshow, home circles and the fixed bottom bar.
+// The circles come from config/roleFeatures.js by the signed-in user's role, so a dashboard page only supplies its
+// live summary panels as children, which show under the circles.
+// The old props role and cards are accepted and ignored, so pages that still pass them keep working.
+export default function DashboardShell({ children }) {
   const navigate = useNavigate()
-  const { profile, loading, isVerified: verified } = useAuth()
-  const { appName, logoUrl } = useBranding()
+  const t = useT()
+  const { role, loading, isVerified } = useAuth()
+  const { isFirm } = useOrgTerms()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const closeMenu = useCallback(() => setMenuOpen(false), [])
 
-  const handleLogout = async () => {
-    await logout()
-    navigate('/')
-  }
+  const items = featuresFor(role).circles.map((entry) => {
+    const locked = isLocked(entry, role, isVerified)
+    return {
+      key: entry.page + entry.route,
+      icon: PAGE_ICONS[entry.label || entry.page] || PAGE_ICONS[entry.page],
+      label: t(featureLabelKey(entry, isFirm)),
+      locked,
+      // Locked circles open the verification page
+      onOpen: () => navigate(locked ? '/pending-verification' : entry.route),
+    }
+  })
 
   return (
-    <div style={{ minHeight: '100vh', position: 'relative', color: 'white' }}>
+    <div style={{ minHeight: 'var(--app-height)', position: 'relative', color: 'var(--fg)' }}>
       <Background />
+      <TopBar onMenu={() => setMenuOpen(true)} menuOpen={menuOpen} />
+      <Slideshow />
 
-      <nav style={glassNav}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>
-          {logoUrl && <img src={logoUrl} alt="" style={{ height: '1.8rem' }} />}
-          {appName}
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          {profile?.name && (
-            <button onClick={() => navigate('/settings')} title="Settings and profile" aria-label="Open settings"
-              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', fontFamily: 'inherit', fontSize: 'inherit', padding: 0 }}>
-              {profile.avatar_url
-                ? <img src={profile.avatar_url} alt="" style={{ width: '1.9rem', height: '1.9rem', borderRadius: '50%', objectFit: 'cover' }} />
-                : <span aria-hidden>⚙️</span>}
-              {profile.name}
-            </button>
-          )}
-          <NotificationBell />
-          {verified && <MessagesBell />}
-          <button onClick={handleLogout}
-            style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem', margin: 0 }}>
-            Logout
-          </button>
-        </div>
-      </nav>
-
-      <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '2rem 1.5rem' }}>
-        <h2 style={{ color: C.turquoise, fontSize: '1.8rem', marginBottom: '0.25rem', textTransform: 'capitalize' }}>
-          {role} Dashboard
-        </h2>
-
+      <main style={{
+        maxWidth: '70rem', margin: '0 auto', minWidth: 0,
+        padding: `var(--sp-4) calc(var(--page-gutter) + var(--safe-right)) calc(var(--sp-6) + var(--bottom-bar-h) + var(--safe-bottom)) calc(var(--page-gutter) + var(--safe-left))`,
+      }}>
         {loading ? (
           <SkeletonCards />
         ) : (
           <>
-            {!verified && (
-              <div onClick={() => navigate('/pending-verification')}
-                style={{ cursor: 'pointer', background: 'rgba(255,200,0,0.15)', border: '1px solid rgba(255,200,0,0.4)', borderRadius: '10px', padding: '0.8rem 1rem', margin: '1rem 0', color: '#ffe08a', fontSize: '0.9rem' }}>
-                ⏳ Your account is awaiting admin verification. Some features are locked.
-              </div>
-            )}
-
-            <ErrorBoundary section>{children}</ErrorBoundary>
-
             <ErrorBoundary section>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(240px, 100%), 1fr))', gap: '1.25rem', marginTop: '1.5rem' }}>
-              {cards.map((card) => {
-                const locked = card.requiresVerification && !verified
-                return (
-                  <div key={card.title}
-                    className="glass"
-                    onClick={(e) => { if (!locked) { addRipple(e); navigate(card.path) } }}
-                    style={{ ...glassCard, padding: '1.5rem', cursor: locked ? 'not-allowed' : 'pointer', opacity: locked ? 0.5 : 1 }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{locked ? '🔒' : card.icon}</div>
-                    <h3 style={{ color: C.turquoise, marginBottom: '0.4rem' }}>{card.title}</h3>
-                    <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: '0.9rem', lineHeight: 1.5 }}>{card.description}</p>
-                  </div>
-                )
-              })}
-            </div>
+              <div style={{ maxWidth: '40rem', margin: '0 auto' }}>
+                <FeatureGrid items={items} />
+              </div>
             </ErrorBoundary>
+            <div style={{ marginTop: 'var(--sp-5)' }}>
+              <ErrorBoundary section>{children}</ErrorBoundary>
+            </div>
           </>
         )}
-      </div>
+      </main>
+
+      <BottomBar />
+      <SideDrawer open={menuOpen} onClose={closeMenu} />
     </div>
   )
 }
