@@ -3,185 +3,162 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
 import { getProfile, ROLE_ROUTES, homeRouteFor } from '../../supabase/authHelpers'
 import { useAuth } from '../../context/AuthContext'
-import Background from '../../components/shared/Background'
-import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
+import { useT } from '../../i18n'
+import { glassBtn, glassInput } from '../../styles/glass'
+import { AuthPage, Card, Field, PasswordInput, Notice, linkStyle } from './authUi'
 
 const API_URL = import.meta.env.VITE_API_URL
 
-function friendlyError(err) {
-  const m = (err?.message || '').toLowerCase()
-  if (m.includes('invalid login credentials')) return 'Invalid email or password.'
-  if (m.includes('email not confirmed')) return 'Please confirm your email first. Check your inbox for the confirmation link.'
-  if (m.includes('failed to fetch') || m.includes('network')) return 'Could not reach the server. Check your connection and try again.'
-  if (m.includes('rate limit') || m.includes('too many')) return 'Too many attempts. Please wait a moment and try again.'
-  return err?.message || 'Something went wrong. Please try again.'
-}
-
+// One sign-in form. The password box is checked against the admin key first (on the server, the key stays on Render).
+// If it matches, the admin sign-in step opens. Otherwise the normal email and password sign-in runs.
 export default function Login() {
   const navigate = useNavigate()
   const location = useLocation()
+  const t = useT()
   const { holdRedirect } = useAuth()
-  const [isAdmin, setIsAdmin] = useState(location.pathname === '/admin-login')
-  const [form, setForm] = useState({ email: '', password: '', adminKey: '' })
-  const [showPassword, setShowPassword] = useState(false)
+  const [step, setStep] = useState(location.pathname === '/admin-login' ? 'admin' : 'user')
+  const [form, setForm] = useState({ email: '', password: '' })
+  const [adminKey, setAdminKey] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const friendly = (err) => {
+    const m = (err?.message || '').toLowerCase()
+    if (m.includes('invalid login credentials')) return t('auth.errInvalid')
+    if (m.includes('email not confirmed')) return t('auth.errConfirm')
+    if (m.includes('failed to fetch') || m.includes('network')) return t('auth.errNetwork')
+    if (m.includes('rate limit') || m.includes('too many')) return t('auth.errRate')
+    return t('auth.errGeneric')
+  }
 
   // Sign out and show an error (used when a check fails after a successful sign-in)
   const rejectLogin = async (message) => {
     await supabase.auth.signOut()
-    localStorage.removeItem('montemy_role')
+    try { localStorage.removeItem('montemy_role') } catch { /* ignore */ }
     setError(message)
   }
 
-  const handleSubmit = async (e) => {
+  // Does what was typed in the password box match the admin key? Any failure counts as "no".
+  const matchesAdminKey = async (value) => {
+    try {
+      const res = await fetch(`${API_URL}/api/admin/validate-key`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminKey: value }),
+      })
+      if (!res.ok) return false
+      const body = await res.json().catch(() => ({}))
+      return body.valid === true
+    } catch { return false }
+  }
+
+  const finish = async (profile) => {
+    try { localStorage.setItem('montemy_role', profile.role) } catch { /* ignore */ }
+    navigate(homeRouteFor(profile))
+  }
+
+  const submitUser = async (e) => {
     e.preventDefault()
     setError('')
+    if (!form.password) return setError(t('auth.enterDetails'))
     setLoading(true)
-    holdRedirect(true) // stop the route guard redirecting before our checks finish
-
     try {
+      if (await matchesAdminKey(form.password)) {
+        setAdminKey(form.password)
+        setForm(f => ({ ...f, password: '' }))
+        setStep('admin')
+        return
+      }
       const email = form.email.trim().toLowerCase()
+      if (!email) return setError(t('auth.enterDetails'))
 
-      const { data, error: signInErr } = await supabase.auth.signInWithPassword({
-        email,
-        password: form.password,
-      })
+      holdRedirect(true) // stop the route guard redirecting before our checks finish
+      const { data, error: signInErr } = await supabase.auth.signInWithPassword({ email, password: form.password })
       if (signInErr) throw signInErr
-
       const profile = await getProfile(data.user.id)
-      if (!profile || !ROLE_ROUTES[profile.role]) {
-        await rejectLogin('We could not find your account profile. Please register or contact support.')
-        return
-      }
-
-      if (isAdmin) {
-        if (profile.role !== 'admin') {
-          await rejectLogin('This account is not an admin account.')
-          return
-        }
-        // The admin key is checked on the server — never in the browser
-        let res, body
-        try {
-          res = await fetch(`${API_URL}/api/admin/login-check`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${data.session.access_token}`,
-            },
-            body: JSON.stringify({ adminKey: form.adminKey }),
-          })
-          body = await res.json().catch(() => ({}))
-        } catch {
-          await rejectLogin('Could not reach the server. Check your connection and try again.')
-          return
-        }
-        if (!res.ok) {
-          await rejectLogin(body.error || 'Invalid admin key.')
-          return
-        }
-      } else if (profile.role === 'admin') {
-        await rejectLogin('Admins must sign in using the Admin Login tab.')
-        return
-      }
-
-      localStorage.setItem('montemy_role', profile.role)
-      navigate(homeRouteFor(profile))
+      if (!profile || !ROLE_ROUTES[profile.role]) return await rejectLogin(t('auth.noProfile'))
+      if (profile.role === 'admin') return await rejectLogin(t('auth.adminUseKey'))
+      await finish(profile)
     } catch (err) {
       console.error(err)
-      setError(friendlyError(err))
+      setError(friendly(err))
     } finally {
       holdRedirect(false)
       setLoading(false)
     }
   }
 
-  const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
+  const submitAdmin = async (e) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    holdRedirect(true)
+    try {
+      const email = form.email.trim().toLowerCase()
+      const { data, error: signInErr } = await supabase.auth.signInWithPassword({ email, password: form.password })
+      if (signInErr) throw signInErr
+      const profile = await getProfile(data.user.id)
+      if (!profile || !ROLE_ROUTES[profile.role]) return await rejectLogin(t('auth.noProfile'))
+      if (profile.role !== 'admin') return await rejectLogin(t('auth.notAdmin'))
+
+      let res
+      try {
+        res = await fetch(`${API_URL}/api/admin/login-check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` },
+          body: JSON.stringify({ adminKey }),
+        })
+      } catch { return await rejectLogin(t('auth.errNetwork')) }
+      if (!res.ok) return await rejectLogin(t('auth.invalidAdminKey'))
+      await finish(profile)
+    } catch (err) {
+      console.error(err)
+      setError(friendly(err))
+    } finally {
+      holdRedirect(false)
+      setLoading(false)
+    }
+  }
+
+  const isAdminStep = step === 'admin'
+  const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-      <Background />
-
-      <style>{`
-        .login-input:focus { border-color: rgba(var(--color-primary-rgb),0.8) !important; box-shadow: 0 0 12px rgba(var(--color-primary-rgb),0.25); }
-        .toggle-tab { transition: all 0.2s; cursor: pointer; padding: 0.6rem 1.5rem; border-radius: 8px; font-weight: 600; font-size: 0.95rem; border: none; }
-      `}</style>
-
-      <nav style={{ position: 'fixed', top: 0, left: 0, right: 0, background: 'rgba(var(--color-bg-rgb),0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(var(--color-primary-rgb),0.2)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', zIndex: 50 }}>
-        <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: C.turquoise, fontSize: '1.4rem', cursor: 'pointer', marginRight: '1rem' }}>←</button>
-        <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>MONTEMY</span>
-      </nav>
-
-      <div style={{ ...glassCard, padding: '2.5rem', maxWidth: '440px', width: '90%', marginTop: '4rem' }} className="glass">
-
-        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ color: C.turquoise, fontSize: '1.8rem', marginBottom: '0.25rem' }}>Welcome Back</h2>
-          <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.9rem' }}>Sign in to your account</p>
+    <AuthPage backTo="/">
+      <Card>
+        <div style={{ textAlign: 'center', marginBottom: 'var(--sp-4)' }}>
+          <h1 style={{ fontSize: 'var(--fs-2xl)', marginBottom: '0.25rem' }}>{isAdminStep ? t('auth.adminTitle') : t('auth.welcomeBack')}</h1>
+          <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-sm)' }}>{isAdminStep ? t('auth.adminSubtitle') : t('auth.signInSubtitle')}</p>
         </div>
 
-        {/* Admin / Regular toggle */}
-        <div style={{ display: 'flex', background: 'rgba(255,255,255,0.07)', borderRadius: '10px', padding: '4px', marginBottom: '1.75rem', gap: '4px' }}>
-          {[['Regular Login', false], ['Admin Login', true]].map(([label, val]) => (
-            <button key={label} type="button"
-              className="toggle-tab"
-              onClick={() => { setIsAdmin(val); setError('') }}
-              style={{ flex: 1, background: isAdmin === val ? 'rgba(var(--color-primary-rgb),0.85)' : 'transparent', color: isAdmin === val ? C.navy : 'rgba(255,255,255,0.6)' }}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <Notice>{error}</Notice>
 
-        {error && (
-          <div style={{ background: 'rgba(255,80,80,0.2)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.9rem 1rem', marginBottom: '1.25rem', color: '#ffaaaa', fontSize: '0.9rem' }}>
-            {error}
-          </div>
-        )}
+        <form onSubmit={isAdminStep ? submitAdmin : submitUser} noValidate={!isAdminStep}>
+          <Field id="login-email" label={t('auth.email')}>
+            <input id="login-email" type="email" value={form.email} onChange={set('email')} placeholder={t('auth.emailPlaceholder')}
+              autoComplete="email" required={isAdminStep} style={glassInput} />
+          </Field>
+          <Field id="login-password" label={t('auth.password')}>
+            <PasswordInput id="login-password" value={form.password} onChange={set('password')} placeholder={t('auth.passwordPlaceholder')} required={isAdminStep} />
+          </Field>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <label style={labelStyle}>Email</label>
-            <input className="login-input" style={glassInput} type="email" value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-              placeholder={isAdmin ? 'Enter admin email' : 'Enter your email'} required />
-          </div>
-
-          <div style={{ marginBottom: isAdmin ? '1.25rem' : '1.5rem' }}>
-            <label style={labelStyle}>Password</label>
-            <div style={{ position: 'relative' }}>
-              <input className="login-input" style={glassInput} type={showPassword ? 'text' : 'password'} value={form.password}
-                onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                placeholder="Enter your password" required />
-              <button type="button" onClick={() => setShowPassword(s => !s)}
-                style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: C.turquoise }}>
-                {showPassword ? '🙈' : '👁️'}
-              </button>
-            </div>
-          </div>
-
-          {isAdmin && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label style={labelStyle}>Admin Key</label>
-              <input className="login-input" style={glassInput} type="password" value={form.adminKey}
-                onChange={e => setForm(f => ({ ...f, adminKey: e.target.value }))}
-                placeholder="Enter admin key" required />
-            </div>
+          {isAdminStep && (
+            <Field id="login-key" label={t('auth.adminKey')}>
+              <PasswordInput id="login-key" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} placeholder={t('auth.adminKeyPlaceholder')} autoComplete="off" required />
+            </Field>
           )}
 
-          <button type="submit" disabled={loading}
-            onClick={(e) => !loading && addRipple(e)}
-            style={{ ...glassBtn, opacity: loading ? 0.7 : 1 }}
-            className="ripple-container">
-            {loading ? 'Signing in...' : 'Login'}
+          <button type="submit" disabled={loading} style={{ ...glassBtn, opacity: loading ? 0.7 : 1 }}>
+            {loading ? t('auth.signingIn') : (isAdminStep ? t('auth.adminSignIn') : t('auth.login'))}
           </button>
         </form>
 
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem' }}>
-            Don't have an account?{' '}
-            <span onClick={() => navigate('/create-account')} style={{ color: C.turquoise, cursor: 'pointer', textDecoration: 'underline' }}>Create one here</span>
-          </span>
-        </div>
-      </div>
-    </div>
+        <p style={{ textAlign: 'center', color: 'var(--fg-muted)', fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-4)' }}>
+          {isAdminStep ? (
+            <button type="button" style={linkStyle} onClick={() => { setStep('user'); setAdminKey(''); setError('') }}>{t('auth.backToSignIn')}</button>
+          ) : (
+            <>{t('auth.noAccount')}{' '}<button type="button" style={linkStyle} onClick={() => navigate('/create-account')}>{t('auth.createOne')}</button></>
+          )}
+        </p>
+      </Card>
+    </AuthPage>
   )
 }
