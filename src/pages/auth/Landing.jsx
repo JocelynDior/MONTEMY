@@ -1,104 +1,56 @@
 import React, { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
+import { ROLE_ROUTES } from '../../supabase/authHelpers'
+import { useBranding } from '../../context/BrandingContext'
+import { useI18n } from '../../i18n'
 import Background from '../../components/shared/Background'
-import { glassCard, glassBtn, addRipple, C } from '../../styles/glass'
-
-const roleRoutes = {
-  student: '/student/dashboard',
-  teacher: '/teacher/dashboard',
-  parent: '/parent/dashboard',
-  principal: '/principal/dashboard',
-  tutor: '/tutor/dashboard',
-  schoolmember: '/schoolmember/dashboard',
-  admin: '/admin/dashboard',
-}
+import { glassCard, glassBtn } from '../../styles/glass'
 
 export default function Landing() {
   const navigate = useNavigate()
+  const { t, lang, setLang, languages } = useI18n()
+  const { appName } = useBranding()
 
+  // A visitor who is already signed in goes straight to their home page (the route guards do the same)
   useEffect(() => {
-    // Check for existing Supabase session on mount
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session) {
-        const role = localStorage.getItem('montemy_role')
-        if (role && roleRoutes[role]) {
-          navigate(roleRoutes[role])
-        }
-      }
+    const go = (session) => {
+      if (!session) return
+      let role = null
+      try { role = localStorage.getItem('montemy_role') } catch { /* ignore */ }
+      if (role && ROLE_ROUTES[role]) navigate(ROLE_ROUTES[role])
     }
-    checkSession()
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        const role = localStorage.getItem('montemy_role')
-        if (role && roleRoutes[role]) {
-          navigate(roleRoutes[role])
-        }
-      }
-    })
-
+    supabase.auth.getSession().then(({ data: { session } }) => go(session))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => go(session))
     return () => subscription.unsubscribe()
-  }, [])
+  }, [navigate])
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-
+    <div style={{ minHeight: 'var(--app-height)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative', color: 'var(--fg)',
+      padding: 'var(--sp-5) calc(var(--page-gutter) + var(--safe-right)) var(--sp-5) calc(var(--page-gutter) + var(--safe-left))' }}>
       <Background />
 
-      {/* Animated orbs */}
-      <div style={{ position: 'fixed', top: '15%', left: '10%', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--color-primary-rgb),0.15) 0%, transparent 70%)', animation: 'orbFloat 7s ease-in-out infinite', pointerEvents: 'none', zIndex: 0 }} />
-      <div style={{ position: 'fixed', bottom: '15%', right: '10%', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--color-primary-rgb),0.1) 0%, transparent 70%)', animation: 'orbFloat 10s ease-in-out infinite reverse', pointerEvents: 'none', zIndex: 0 }} />
+      <div style={{ ...glassCard, padding: 'var(--sp-6) var(--sp-5)', maxWidth: '26rem', width: '100%', textAlign: 'center' }}>
+        <div style={{ fontSize: 'var(--fs-sm)', letterSpacing: '0.25em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: '0.5rem' }}>{t('auth.welcomeTo')}</div>
+        <h1 style={{ fontFamily: 'var(--font-brand)', fontSize: 'clamp(2.25rem, 12vw, 3.5rem)', lineHeight: 1.05, marginBottom: '0.75rem', overflowWrap: 'anywhere' }}>{appName}</h1>
+        <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.6, marginBottom: 'var(--sp-5)' }}>{t('auth.tagline')}</p>
 
-      <style>{`
-        @keyframes orbFloat {
-          0%,100% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(-30px) scale(1.05); }
-        }
-        @keyframes logoGlow {
-          0%,100% { text-shadow: 0 0 20px rgba(var(--color-primary-rgb),0.6), 0 0 40px rgba(var(--color-primary-rgb),0.3); }
-          50% { text-shadow: 0 0 35px rgba(var(--color-primary-rgb),0.9), 0 0 70px rgba(var(--color-primary-rgb),0.5); }
-        }
-        .land-btn {
-          transition: transform 0.2s, box-shadow 0.2s !important;
-        }
-        .land-btn:hover {
-          transform: translateY(-3px) !important;
-          box-shadow: 0 0 35px rgba(var(--color-primary-rgb),0.7) !important;
-        }
-        .land-btn:active { transform: scale(0.97) !important; }
-      `}</style>
+        <div style={{ height: 1, background: 'var(--border)', marginBottom: 'var(--sp-5)' }} />
 
-      <div style={{ ...glassCard, padding: '3rem 2.5rem', maxWidth: '420px', width: '90%', textAlign: 'center', zIndex: 1 }}
-        className="glass ripple-container">
-
-        {/* Logo */}
-        <div style={{ fontSize: '1rem', color: C.turquoise, letterSpacing: '4px', marginBottom: '0.5rem', opacity: 0.8 }}>WELCOME TO</div>
-        <h1 style={{ fontSize: '3.5rem', fontWeight: '700', color: C.turquoise, animation: 'logoGlow 3s ease-in-out infinite', marginBottom: '0.5rem' }}>MONTEMY</h1>
-        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.95rem', marginBottom: '3rem', lineHeight: '1.6' }}>
-          Your all-in-one education platform connecting students, teachers, tutors, parents and schools.
-        </p>
-
-        {/* Divider */}
-        <div style={{ height: '1px', background: 'linear-gradient(to right, transparent, rgba(var(--color-primary-rgb),0.5), transparent)', marginBottom: '2rem' }} />
-
-        {/* Buttons */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <button className="land-btn ripple-container"
-            onClick={(e) => { addRipple(e); navigate('/login') }}
-            style={{ ...glassBtn, fontSize: '1.1rem', padding: '1rem' }}>
-            Login
-          </button>
-          <button className="land-btn ripple-container"
-            onClick={(e) => { addRipple(e); navigate('/create-account') }}
-            style={{ ...glassBtn, background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid rgba(var(--color-primary-rgb),0.5)', boxShadow: '0 0 20px rgba(var(--color-primary-rgb),0.15)', fontSize: '1.1rem', padding: '1rem' }}>
-            Create Account
-          </button>
+        <div style={{ display: 'grid', gap: '0.9rem' }}>
+          <button onClick={() => navigate('/login')} style={glassBtn}>{t('auth.login')}</button>
+          <button onClick={() => navigate('/create-account')} style={{ ...glassBtn, background: 'transparent', color: 'var(--fg)', border: '1px solid var(--border-strong)' }}>{t('auth.createAccount')}</button>
         </div>
 
-        <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem', marginTop: '2rem' }}>© 2024 Montemy. All rights reserved.</p>
+        <div style={{ marginTop: 'var(--sp-5)' }}>
+          <label htmlFor="landing-lang" style={{ display: 'block', fontSize: 'var(--fs-xs)', color: 'var(--fg-muted)', marginBottom: '0.3rem' }}>{t('auth.language')}</label>
+          <select id="landing-lang" value={lang} onChange={(e) => setLang(e.target.value)}
+            style={{ width: '100%', padding: '0.6rem 0.75rem', background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', fontSize: '1rem', fontFamily: 'inherit' }}>
+            {languages.map(l => <option key={l.code} value={l.code}>{l.native}</option>)}
+          </select>
+        </div>
+
+        <p style={{ color: 'var(--fg-subtle)', fontSize: 'var(--fs-xs)', marginTop: 'var(--sp-5)' }}>{t('auth.copyright', { year: new Date().getFullYear(), app: appName })}</p>
       </div>
     </div>
   )
