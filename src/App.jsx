@@ -46,6 +46,10 @@ const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'))
 const SchedulePage = lazy(() => import('./pages/timetable/SchedulePage'))
 const Events = lazy(() => import('./pages/shared/Events'))
 const Settings = lazy(() => import('./pages/Settings'))
+const HelpChat = lazy(() => import('./pages/help/HelpChat'))
+const PrivacyPolicy = lazy(() => import('./pages/legal/PrivacyPolicy'))
+const Terms = lazy(() => import('./pages/legal/Terms'))
+const MoreInfo = lazy(() => import('./pages/legal/MoreInfo'))
 import InstallPrompt from './components/pwa/InstallPrompt'
 import OfflineBanner from './components/pwa/OfflineBanner'
 import ErrorBoundary from './components/shared/ErrorBoundary'
@@ -98,6 +102,12 @@ export default function App() {
 
           {/* Settings & profile: every role */}
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+
+          {/* Help, Privacy, Terms, More Info: every signed-in role */}
+          <Route path="/help" element={<ProtectedRoute><HelpChat /></ProtectedRoute>} />
+          <Route path="/privacy" element={<ProtectedRoute><PrivacyPolicy /></ProtectedRoute>} />
+          <Route path="/terms" element={<ProtectedRoute><Terms /></ProtectedRoute>} />
+          <Route path="/more-info" element={<ProtectedRoute><MoreInfo /></ProtectedRoute>} />
 
           {/* Any signed-in user */}
           <Route path="/pending-verification" element={<ProtectedRoute><PendingVerification /></ProtectedRoute>} />
