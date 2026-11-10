@@ -1,110 +1,82 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../../supabase/client'
-import Background from '../../components/shared/Background'
-import { glassCard, glassBtn, glassInput, addRipple, C } from '../../styles/glass'
+import { useT } from '../../i18n'
+import { glassBtn, glassInput } from '../../styles/glass'
+import Icon from '../../components/shared/Icon'
 import GradeSubjectFields from '../../components/student/GradeSubjectFields'
+import { AuthPage, Card, Field, PasswordInput, Notice, linkStyle } from './authUi'
 
 const API_URL = import.meta.env.VITE_API_URL
-
-const labels = {
-  student: 'Student', tutor: 'Tutor', parent: 'Parent',
-  teacher: 'Teacher', principal: 'Principal', schoolmember: 'School Member',
-}
-const icons = {
-  student: '🎓', tutor: '📖', parent: '👨‍👩‍👧',
-  teacher: '🏫', principal: '👔', schoolmember: '🏢',
-}
-// role -> role-specific table
-const ROLE_TABLES = {
-  student: 'students', tutor: 'tutors', parent: 'parents',
-  teacher: 'teachers', principal: 'principals', schoolmember: 'school_members',
-}
-
-function friendlyError(err) {
-  const m = (err?.message || '').toLowerCase()
-  if (m.includes('already registered') || m.includes('already been registered'))
-    return 'An account with this email already exists. Try logging in instead.'
-  if (m.includes('password'))
-    return 'Password is too weak. Use at least 6 characters.'
-  if (m.includes('valid email') || m.includes('invalid email'))
-    return 'Please enter a valid email address.'
-  if (m.includes('rate limit') || m.includes('too many'))
-    return 'Too many attempts. Please wait a minute and try again.'
-  if (m.includes('failed to fetch'))
-    return 'Cannot reach the server. Check your connection and try again.'
-  return err?.message || 'Something went wrong. Please try again.'
-}
-
-const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
+const ROLES = ['student', 'tutor', 'parent', 'teacher', 'principal', 'staff']
 
 export default function Register() {
-  const { type } = useParams()
+  const { type: rawType } = useParams()
+  const type = rawType === 'schoolmember' ? 'staff' : rawType   // the old address still works
   const navigate = useNavigate()
+  const t = useT()
   const isAdmin = type === 'admin'
-  const validRole = isAdmin || !!ROLE_TABLES[type]
+  const validRole = isAdmin || ROLES.includes(type)
+  const isStudent = type === 'student'
 
   const [form, setForm] = useState({ name: '', username: '', org: '', email: '', password: '', adminKey: '' })
-  // { state: 'idle' | 'checking' | 'ok' | 'bad', msg }
-  const [unameStatus, setUnameStatus] = useState({ state: 'idle', msg: '' })
+  const [unameStatus, setUnameStatus] = useState({ state: 'idle', msg: '' })   // idle | checking | ok | bad
   const [orgSearch, setOrgSearch] = useState('')
   const [orgs, setOrgs] = useState([])
   const [filteredOrgs, setFilteredOrgs] = useState([])
   const [showOrgDropdown, setShowOrgDropdown] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [confirmEmail, setConfirmEmail] = useState('')
   const [verifyChoice, setVerifyChoice] = useState('now')
   const [grade, setGrade] = useState('')
   const [subjects, setSubjects] = useState([])
-  const isStudent = type === 'student'
 
   const setField = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
+  const friendly = (err) => {
+    const m = (err?.message || '').toLowerCase()
+    if (m.includes('already registered') || m.includes('already been registered') || m.includes('already exists')) return t('auth.errExists')
+    if (m.includes('password')) return t('auth.errWeak')
+    if (m.includes('valid email') || m.includes('invalid email')) return t('auth.errEmail')
+    if (m.includes('rate limit') || m.includes('too many')) return t('auth.errRate')
+    if (m.includes('failed to fetch')) return t('auth.errNetwork')
+    return t('auth.errRegister')
+  }
+
   useEffect(() => {
-    if (!isAdmin) loadOrgs()
-  }, [isAdmin])
+    if (isAdmin) return
+    let cancelled = false
+    ;(async () => {
+      // A public view that only exposes id, name and type of active organisations
+      const { data, error: loadErr } = await supabase.from('organizations_public').select('id, name, type').order('name')
+      if (cancelled) return
+      if (loadErr) { console.error(loadErr); setError(t('auth.orgLoadFail')); return }
+      setOrgs(data || [])
+    })()
+    return () => { cancelled = true }
+  }, [isAdmin]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Check the username with the API shortly after the user stops typing
   useEffect(() => {
-    if (isAdmin) return
+    if (isAdmin) return undefined
     const u = form.username.trim().toLowerCase()
-    if (!u) { setUnameStatus({ state: 'idle', msg: '' }); return }
-    if (!/^[a-z0-9._]{3,20}$/.test(u)) {
-      setUnameStatus({ state: 'bad', msg: 'Use 3-20 letters, numbers, "." or "_".' })
-      return
-    }
-    setUnameStatus({ state: 'checking', msg: 'Checking...' })
+    if (!u) { setUnameStatus({ state: 'idle', msg: '' }); return undefined }
+    if (!/^[a-z0-9._]{3,20}$/.test(u)) { setUnameStatus({ state: 'bad', msg: t('auth.unameFormat') }); return undefined }
+    setUnameStatus({ state: 'checking', msg: t('auth.unameChecking') })
     let cancelled = false
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const res = await fetch(`${API_URL}/api/auth/username-available?u=${encodeURIComponent(u)}`)
         const data = await res.json().catch(() => ({}))
         if (cancelled) return
-        if (!res.ok) setUnameStatus({ state: 'idle', msg: '' }) // the server re-checks on submit
-        else if (data.available) setUnameStatus({ state: 'ok', msg: 'Username is available.' })
-        else setUnameStatus({ state: 'bad', msg: data.reason || 'That username is taken.' })
-      } catch {
-        if (!cancelled) setUnameStatus({ state: 'idle', msg: '' })
-      }
+        if (!res.ok) setUnameStatus({ state: 'idle', msg: '' })   // the server checks again on submit
+        else if (data.available) setUnameStatus({ state: 'ok', msg: t('auth.unameOk') })
+        else setUnameStatus({ state: 'bad', msg: t('auth.unameTaken') })
+      } catch { if (!cancelled) setUnameStatus({ state: 'idle', msg: '' }) }
     }, 400)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [form.username, isAdmin])
-
-  const loadOrgs = async () => {
-    // A public view that only exposes id, name and type of active organisations (see Phase 29 SQL)
-    const { data, error } = await supabase
-      .from('organizations_public')
-      .select('id, name, type')
-      .order('name')
-    if (error) {
-      console.error(error)
-      setError(`Could not load schools and organisations (${error.message || 'unknown error'}). Please refresh the page.`)
-      return
-    }
-    setOrgs(data || [])
-  }
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [form.username, isAdmin]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOrgSearch = (val) => {
     setOrgSearch(val)
@@ -113,280 +85,174 @@ export default function Register() {
     setFilteredOrgs(orgs.filter(o => o.name.toLowerCase().includes(val.toLowerCase())))
     setShowOrgDropdown(true)
   }
-
-  const selectOrg = (org) => {
-    setForm(f => ({ ...f, org: org.id }))
-    setOrgSearch(org.name)
-    setShowOrgDropdown(false)
-  }
+  const selectOrg = (org) => { setForm(f => ({ ...f, org: org.id })); setOrgSearch(org.name); setShowOrgDropdown(false) }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-
     const email = form.email.trim().toLowerCase()
     const name = form.name.trim()
     const username = form.username.trim().toLowerCase()
 
     if (!isAdmin) {
-      if (!/^[a-z0-9._]{3,20}$/.test(username)) {
-        setError('Choose a username of 3-20 letters, numbers, "." or "_".')
-        return
-      }
-      if (unameStatus.state === 'bad') {
-        setError(unameStatus.msg)
-        return
-      }
+      if (!/^[a-z0-9._]{3,20}$/.test(username)) return setError(t('auth.errUsername'))
+      if (unameStatus.state === 'bad') return setError(unameStatus.msg)
+      if (!form.org) return setError(t('auth.errOrg'))
     }
-
-    if (!isAdmin && !form.org) {
-      setError('Please select a school or tutor organisation from the list.')
-      return
-    }
-
-    if (isStudent && (!grade || subjects.length === 0)) {
-      setError('Please choose your grade and at least one subject.')
-      return
-    }
+    if (isStudent && (!grade || subjects.length === 0)) return setError(t('auth.errGradeSubjects'))
 
     setLoading(true)
     try {
       if (isAdmin) {
-        // Admin key is checked on the server — never in the browser
         const res = await fetch(`${API_URL}/api/admin/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, email, password: form.password, adminKey: form.adminKey }),
         })
         const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.error || 'Admin registration failed.')
-
+        if (!res.ok) throw Object.assign(new Error(data.error || 'register'), res.status === 403 ? { display: t('auth.invalidAdminKey') } : {})
         const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: form.password })
         if (signInErr) throw signInErr
-
-        localStorage.setItem('montemy_role', 'admin')
+        try { localStorage.setItem('montemy_role', 'admin') } catch { /* ignore */ }
         navigate('/admin/dashboard')
         return
       }
 
-      // "Verify later": Render creates the account with the email pre-approved,
-      // so the user can log in now and verify from their profile later.
+      // "Verify later": the server creates the account with the email pre-approved, so the user can sign in now
       if (verifyChoice === 'later') {
         const res = await fetch(`${API_URL}/api/auth/register-later`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, username, email, password: form.password, role: type, orgId: form.org, ...(isStudent ? { grade, subjects } : {}) }),
         })
         const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.error || 'Registration failed.')
-
+        if (!res.ok) throw new Error(data.error || 'register')
         const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: form.password })
         if (signInErr) throw signInErr
-
-        localStorage.setItem('montemy_role', type)
+        try { localStorage.setItem('montemy_role', type) } catch { /* ignore */ }
         navigate('/pending-verification')
         return
       }
 
-      // Profile rows are created on the server by a database trigger,
-      // using the details passed here. Works with email confirmation on.
+      // The profile rows are created by a database trigger from the details passed here
       const { data, error: signUpErr } = await supabase.auth.signUp({
-        email,
-        password: form.password,
-        options: {
-          data: { name, username, role: type, org_id: form.org, ...(isStudent ? { grade, subjects } : {}) },
-          emailRedirectTo: `${window.location.origin}/login`,
-        },
+        email, password: form.password,
+        options: { data: { name, username, role: type, org_id: form.org, ...(isStudent ? { grade, subjects } : {}) }, emailRedirectTo: `${window.location.origin}/login` },
       })
       if (signUpErr) throw signUpErr
-
       // Supabase hides duplicate emails by returning a user with no identities
-      if (data.user && data.user.identities && data.user.identities.length === 0) {
-        throw new Error('An account with this email already exists. Try logging in instead.')
-      }
-
-      localStorage.setItem('montemy_role', type)
+      if (data.user && data.user.identities && data.user.identities.length === 0) throw new Error('already exists')
+      try { localStorage.setItem('montemy_role', type) } catch { /* ignore */ }
       setConfirmEmail(email)
     } catch (err) {
       console.error(err)
-      setError(friendlyError(err))
+      setError(err.display || friendly(err))
     }
     setLoading(false)
   }
 
   if (confirmEmail) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-        <Background />
-        <div style={{ ...glassCard, padding: '3rem 2.5rem', maxWidth: '440px', width: '90%', textAlign: 'center' }} className="glass">
-          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📧</div>
-          <h2 style={{ color: C.turquoise, fontSize: '1.6rem', marginBottom: '1rem' }}>Check your email</h2>
-          <p style={{ color: 'rgba(255,255,255,0.75)', lineHeight: '1.7', marginBottom: '0.75rem' }}>
-            We sent a confirmation link to <strong style={{ color: C.turquoise }}>{confirmEmail}</strong>.
-            Click it to confirm your email, then log in.
-          </p>
-          <p style={{ color: 'rgba(255,255,255,0.5)', lineHeight: '1.7', marginBottom: '2rem', fontSize: '0.9rem' }}>
-            After you log in, your dashboard unlocks once an admin verifies your account. Check your spam folder if you don't see the email.
-          </p>
-          <button onClick={() => navigate('/login')} style={{ ...glassBtn }} className="ripple-container">
-            Go to Login
-          </button>
-        </div>
-      </div>
+      <AuthPage backTo="/">
+        <Card style={{ textAlign: 'center' }}>
+          <div aria-hidden style={{ display: 'inline-flex', marginBottom: 'var(--sp-4)' }}><Icon name="mail" size="3.5rem" strokeWidth={1.5} /></div>
+          <h2 style={{ fontSize: 'var(--fs-2xl)', marginBottom: 'var(--sp-3)' }}>{t('auth.checkEmail')}</h2>
+          <p style={{ lineHeight: 1.7, marginBottom: '0.75rem', overflowWrap: 'anywhere' }}>{t('auth.checkEmailText', { email: confirmEmail })}</p>
+          <p style={{ color: 'var(--fg-muted)', lineHeight: 1.7, marginBottom: 'var(--sp-5)', fontSize: 'var(--fs-sm)' }}>{t('auth.afterLogin')}</p>
+          <button onClick={() => navigate('/login')} style={glassBtn}>{t('auth.goLogin')}</button>
+        </Card>
+      </AuthPage>
     )
   }
 
-  const passwordField = (
-    <div style={{ marginBottom: '1.5rem' }}>
-      <label style={labelStyle}>Password</label>
-      <div style={{ position: 'relative' }}>
-        <input className="reg-input" style={glassInput} type={showPassword ? 'text' : 'password'}
-          value={form.password} onChange={setField('password')}
-          placeholder="Create a password (min 6 characters)" required minLength={6} />
-        <button type="button" onClick={() => setShowPassword(s => !s)}
-          style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: C.turquoise }}>
-          {showPassword ? '🙈' : '👁️'}
-        </button>
-      </div>
-    </div>
-  )
+  const unameColor = unameStatus.state === 'bad' ? 'var(--fg)' : 'var(--fg-muted)'
 
   return (
-    <div style={{ minHeight: '100vh', position: 'relative', color: 'white' }}>
-      <Background />
+    <AuthPage backTo="/create-account" maxWidth="32rem">
+      <Card>
+        <h2 style={{ textAlign: 'center', fontSize: 'var(--fs-2xl)', marginBottom: 'var(--sp-5)' }}>
+          {isAdmin ? t('auth.createAdmin') : t('auth.createRole', { role: t(`shell.role_${type}`) })}
+        </h2>
 
-      <style>{`
-        .reg-input:focus { border-color: rgba(var(--color-primary-rgb),0.8) !important; box-shadow: 0 0 12px rgba(var(--color-primary-rgb),0.25); }
-        .org-item:hover { background: rgba(var(--color-primary-rgb),0.15) !important; }
-      `}</style>
+        {!validRole && <Notice>{t('auth.unknownType')}</Notice>}
+        <Notice>{error}</Notice>
 
-      <nav style={{ background: 'rgba(var(--color-bg-rgb),0.5)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(var(--color-primary-rgb),0.25)', padding: '1rem 2rem', display: 'flex', alignItems: 'center', gap: '1rem', position: 'sticky', top: 0, zIndex: 50 }}>
-        <button onClick={() => navigate('/create-account')} style={{ background: 'none', border: 'none', color: C.turquoise, fontSize: '1.4rem', cursor: 'pointer' }}>←</button>
-        <span style={{ color: C.turquoise, fontWeight: '700', fontSize: '1.4rem' }}>MONTEMY</span>
-      </nav>
+        <form onSubmit={handleSubmit}>
+          <Field id="reg-name" label={t('auth.fullName')}>
+            <input id="reg-name" style={glassInput} value={form.name} onChange={setField('name')} placeholder={t('auth.fullNamePlaceholder')} autoComplete="name" required />
+          </Field>
 
-      <div style={{ maxWidth: '480px', margin: '0 auto', padding: '2.5rem 1.5rem' }}>
-        <div style={{ ...glassCard, padding: '2.5rem' }} className="glass">
-
-          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>{isAdmin ? '🔐' : icons[type] || '👤'}</div>
-            <h2 style={{ color: C.turquoise, fontSize: '1.6rem' }}>
-              {isAdmin ? 'Create Admin Account' : `Create ${labels[type] || type} Account`}
-            </h2>
-          </div>
-
-          {!validRole && (
-            <div style={{ background: 'rgba(255,80,80,0.2)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.9rem 1rem', marginBottom: '1.5rem', color: '#ffaaaa', fontSize: '0.9rem' }}>
-              Unknown account type. Please go back and choose one.
-            </div>
+          {!isAdmin && (
+            <Field id="reg-username" label={t('auth.username')}
+              hint={unameStatus.msg ? <div role="status" style={{ fontSize: 'var(--fs-xs)', marginTop: '0.4rem', color: unameColor }}>{unameStatus.msg}</div> : null}>
+              <input id="reg-username" style={glassInput} value={form.username}
+                onChange={e => setForm(f => ({ ...f, username: e.target.value.toLowerCase().replace(/\s+/g, '') }))}
+                placeholder={t('auth.usernamePlaceholder')} maxLength={20} autoComplete="off" autoCapitalize="none" required />
+            </Field>
           )}
 
-          {error && (
-            <div style={{ background: 'rgba(255,80,80,0.2)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.9rem 1rem', marginBottom: '1.5rem', color: '#ffaaaa', fontSize: '0.9rem' }}>
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={labelStyle}>Full Name</label>
-              <input className="reg-input" style={glassInput} value={form.name}
-                onChange={setField('name')} placeholder="Enter your full name" required />
-            </div>
-
-            {!isAdmin && (
-              <div style={{ marginBottom: '1.25rem' }}>
-                <label style={labelStyle}>Username</label>
-                <input className="reg-input" style={glassInput} value={form.username}
-                  onChange={e => setForm(f => ({ ...f, username: e.target.value.toLowerCase().replace(/\s+/g, '') }))}
-                  placeholder="e.g. thabo.m (shown to other users instead of your email)"
-                  maxLength={20} autoComplete="off" autoCapitalize="none" required />
-                {unameStatus.msg && (
-                  <div style={{ fontSize: '0.8rem', marginTop: '0.4rem', color: unameStatus.state === 'ok' ? '#7dffb0' : unameStatus.state === 'bad' ? '#ffaaaa' : 'rgba(255,255,255,0.5)' }}>
-                    {unameStatus.msg}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {!isAdmin && (
-              <div style={{ marginBottom: '1.25rem', position: 'relative' }}>
-                <label style={labelStyle}>School / Tutor Organisation</label>
-                <input className="reg-input" style={glassInput} value={orgSearch}
-                  onChange={e => handleOrgSearch(e.target.value)}
-                  placeholder="Search for your school or tutor org..." autoComplete="off" />
-                {showOrgDropdown && (
-                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'rgba(var(--color-bg-dark-rgb),0.95)', backdropFilter: 'blur(20px)', border: '1px solid rgba(var(--color-primary-rgb),0.3)', borderRadius: '10px', marginTop: '4px', zIndex: 100, maxHeight: '200px', overflowY: 'auto' }}>
-                    {filteredOrgs.length === 0 ? (
-                      <div style={{ padding: '1rem', color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem', textAlign: 'center' }}>No results found</div>
-                    ) : filteredOrgs.map(org => (
-                      <div key={org.id} className="org-item" onClick={() => selectOrg(org)}
-                        style={{ padding: '0.75rem 1rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background 0.15s' }}>
-                        <span style={{ color: 'white', fontSize: '0.95rem' }}>{org.name}</span>
-                        <span style={{ color: C.turquoise, fontSize: '0.75rem', marginLeft: '0.5rem', opacity: 0.7 }}>{org.type === 'school' ? '🏫' : '📖'}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {isStudent && (
-              <GradeSubjectFields grade={grade} subjects={subjects} onGrade={setGrade} onSubjects={setSubjects} />
-            )}
-
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={labelStyle}>Email</label>
-              <input className="reg-input" style={glassInput} type="email" value={form.email}
-                onChange={setField('email')} placeholder="Enter your email" required />
-            </div>
-
-            {passwordField}
-
-            {isAdmin && (
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={labelStyle}>Admin Key</label>
-                <input className="reg-input" style={glassInput} type="password" value={form.adminKey}
-                  onChange={setField('adminKey')} placeholder="Enter admin key" required />
-              </div>
-            )}
-
-            {!isAdmin && (
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={labelStyle}>Email verification</label>
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                  {[
-                    ['now', 'Verify now', 'We email you a link'],
-                    ['later', 'Verify later', 'Skip for now, verify in your profile'],
-                  ].map(([val, title, sub]) => (
-                    <div key={val} onClick={() => setVerifyChoice(val)}
-                      style={{
-                        flex: 1, cursor: 'pointer', padding: '0.75rem', borderRadius: '10px',
-                        border: verifyChoice === val ? '1px solid rgba(var(--color-primary-rgb),0.9)' : '1px solid rgba(255,255,255,0.15)',
-                        background: verifyChoice === val ? 'rgba(var(--color-primary-rgb),0.15)' : 'rgba(255,255,255,0.05)',
-                      }}>
-                      <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem' }}>{title}</div>
-                      <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', marginTop: '0.25rem' }}>{sub}</div>
-                    </div>
+          {!isAdmin && (
+            <div style={{ marginBottom: 'var(--sp-4)', position: 'relative' }}>
+              <label htmlFor="reg-org" style={{ display: 'block', fontSize: 'var(--fs-sm)', marginBottom: '0.4rem', fontWeight: 600 }}>{t('auth.orgLabel')}</label>
+              <input id="reg-org" style={glassInput} value={orgSearch} onChange={e => handleOrgSearch(e.target.value)}
+                placeholder={t('auth.orgPlaceholder')} autoComplete="off" role="combobox" aria-expanded={showOrgDropdown} aria-controls="reg-org-list" />
+              {showOrgDropdown && (
+                <ul id="reg-org-list" role="listbox" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, position: 'absolute', insetInline: 0, top: '100%', background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', zIndex: 100, maxHeight: '13rem', overflowY: 'auto' }}>
+                  {filteredOrgs.length === 0 ? (
+                    <li style={{ padding: '1rem', color: 'var(--fg-muted)', fontSize: 'var(--fs-sm)', textAlign: 'center' }}>{t('auth.noResults')}</li>
+                  ) : filteredOrgs.map(org => (
+                    <li key={org.id} role="option" aria-selected={form.org === org.id}>
+                      <button type="button" onClick={() => selectOrg(org)}
+                        style={{ width: '100%', textAlign: 'start', padding: '0.75rem 1rem', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--fg)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '1rem', display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                        <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{org.name}</span>
+                        <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>{org.type === 'tutor' ? t('shell.orgFirm') : t('shell.orgSchool')}</span>
+                      </button>
+                    </li>
                   ))}
-                </div>
+                </ul>
+              )}
+            </div>
+          )}
+
+          {isStudent && <GradeSubjectFields grade={grade} subjects={subjects} onGrade={setGrade} onSubjects={setSubjects} />}
+
+          <Field id="reg-email" label={t('auth.email')}>
+            <input id="reg-email" style={glassInput} type="email" value={form.email} onChange={setField('email')} placeholder={t('auth.emailPlaceholder')} autoComplete="email" required />
+          </Field>
+
+          <Field id="reg-password" label={t('auth.password')}>
+            <PasswordInput id="reg-password" value={form.password} onChange={setField('password')} placeholder={t('auth.createPasswordPlaceholder')} autoComplete="new-password" required minLength={6} />
+          </Field>
+
+          {isAdmin && (
+            <Field id="reg-key" label={t('auth.adminKey')}>
+              <input id="reg-key" style={glassInput} type="password" value={form.adminKey} onChange={setField('adminKey')} placeholder={t('auth.adminKeyPlaceholder')} autoComplete="off" required />
+            </Field>
+          )}
+
+          {!isAdmin && (
+            <fieldset style={{ border: 'none', padding: 0, margin: '0 0 var(--sp-5)', minWidth: 0 }}>
+              <legend style={{ fontSize: 'var(--fs-sm)', marginBottom: '0.4rem', fontWeight: 600, padding: 0 }}>{t('auth.emailVerification')}</legend>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))', gap: '0.75rem' }}>
+                {[['now', 'verifyNow'], ['later', 'verifyLater']].map(([val, key]) => (
+                  <label key={val} style={{ cursor: 'pointer', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: verifyChoice === val ? '2px solid var(--fg)' : '1px solid var(--border-strong)', background: 'var(--surface)', display: 'block' }}>
+                    <input type="radio" name="verify" value={val} checked={verifyChoice === val} onChange={() => setVerifyChoice(val)}
+                      style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }} />
+                    <span style={{ display: 'block', fontWeight: 700 }}>{t(`auth.${key}`)}</span>
+                    <span style={{ display: 'block', color: 'var(--fg-muted)', fontSize: 'var(--fs-xs)', marginTop: '0.25rem' }}>{t(`auth.${key}Sub`)}</span>
+                  </label>
+                ))}
               </div>
-            )}
+            </fieldset>
+          )}
 
-            <button type="submit" disabled={loading || !validRole}
-              onClick={(e) => !loading && addRipple(e)}
-              style={{ ...glassBtn, opacity: loading || !validRole ? 0.7 : 1 }}
-              className="ripple-container">
-              {loading ? 'Creating...' : 'Create Account'}
-            </button>
-          </form>
+          <button type="submit" disabled={loading || !validRole} style={{ ...glassBtn, opacity: loading || !validRole ? 0.7 : 1 }}>
+            {loading ? t('auth.creating') : t('auth.createAccount')}
+          </button>
+        </form>
 
-          <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', marginTop: '1.5rem' }}>
-            Already have an account?{' '}
-            <span onClick={() => navigate('/login')} style={{ color: C.turquoise, cursor: 'pointer', textDecoration: 'underline' }}>Login here</span>
-          </p>
-        </div>
-      </div>
-    </div>
+        <p style={{ textAlign: 'center', color: 'var(--fg-muted)', fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-4)' }}>
+          {t('auth.haveAccount')}{' '}<button type="button" style={linkStyle} onClick={() => navigate('/login')}>{t('auth.loginHere')}</button>
+        </p>
+      </Card>
+    </AuthPage>
   )
 }
