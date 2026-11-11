@@ -3,15 +3,17 @@ import { useNavigate, useParams } from 'react-router-dom'
 import StudentPage from '../../components/student/StudentPage'
 import { useApiData } from '../../hooks/useApiData'
 import { apiFetch } from '../../api/apiClient'
-import { fmtDate, gradeColor, statusColor } from '../../components/student/studentUtils'
-import { ACCEPT, fmtSize, iconFor } from '../../components/resources/resourceUtils'
+import { fmtDate, gradeBarFill, gradeLevelKey, statusColor, statusLabel } from '../../components/student/studentUtils'
+import { ACCEPT, fmtSize, kindOf } from '../../components/resources/resourceUtils'
 import { openAssignmentFile, uploadAssignmentFile } from '../../components/assignments/assignmentFiles'
-import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
+import { ErrorBox, ghostBtn, muted, panel as basePanel } from '../../components/parent/parentUi'
+import { glassBtn, glassInput } from '../../styles/glass'
+import { useT } from '../../i18n'
+import Icon from '../../components/shared/Icon'
 import SkeletonList from '../../components/shared/Skeleton'
 
-const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
-const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
-const ghostBtn = { ...glassBtn, width: 'auto', padding: '0.45rem 1rem', fontSize: '0.85rem', background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }
+const panel = { ...basePanel, marginBottom: 'var(--sp-4)' }
+const label = { display: 'block', color: 'var(--fg)', fontSize: 'var(--fs-sm)', marginBottom: '0.4rem', fontWeight: 600 }
 
 // Live countdown to the due date. serverOffset lines the clock up with the server's time.
 function useNow(offset) {
@@ -30,31 +32,40 @@ function countdown(dueIso, now) {
   const h = Math.floor((abs % 86400000) / 3600000)
   const m = Math.floor((abs % 3600000) / 60000)
   const s = Math.floor((abs % 60000) / 1000)
-  const parts = d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`
-  return { late: diff < 0, text: parts, urgent: diff >= 0 && diff < 86400000 }
+  return { late: diff < 0, d, h, m, s, urgent: diff >= 0 && diff < 86400000 }
+}
+
+// "2d 4h 10m" in the user's language (the unit letters are in the translations)
+function countdownText(cd, t) {
+  if (cd.d > 0) return t('student.cdDays', { d: cd.d, h: cd.h, m: cd.m })
+  if (cd.h > 0) return t('student.cdHours', { h: cd.h, m: cd.m, s: cd.s })
+  return t('student.cdMinutes', { m: cd.m, s: cd.s })
 }
 
 function FileChip({ name, size, mime, onOpen }) {
+  const t = useT()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const open = async () => {
     setBusy(true); setErr('')
-    try { await onOpen() } catch (e) { setErr(e.message || 'Could not open the file.') }
+    try { await onOpen() } catch (e) { setErr(e.message || t('student.couldNotOpenFile')) }
     setBusy(false)
   }
   return (
-    <div style={{ marginBottom: '0.4rem' }}>
-      <button onClick={open} disabled={busy} style={{ ...ghostBtn, display: 'inline-flex', gap: '0.5rem', alignItems: 'center', textAlign: 'left' }}>
-        <span aria-hidden="true">{iconFor(mime)}</span>
-        <span style={{ overflowWrap: 'anywhere' }}>{busy ? 'Opening...' : name}</span>
-        {size ? <span style={{ ...muted, fontSize: '0.75rem' }}>{fmtSize(size)}</span> : null}
+    <div style={{ marginBottom: '0.4rem', maxWidth: '100%' }}>
+      <button onClick={open} disabled={busy} style={{ ...ghostBtn, display: 'inline-flex', gap: '0.5rem', alignItems: 'center', textAlign: 'start', maxWidth: '100%' }}>
+        <Icon name={kindOf(mime) === 'image' ? 'image' : 'file'} />
+        <span style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{busy ? t('student.opening') : name}</span>
+        {size ? <span style={{ ...muted, fontSize: 'var(--fs-xs)' }}>{fmtSize(size)}</span> : null}
+        <Icon name="download" />
       </button>
-      {err && <div role="alert" style={{ color: '#ffb3b3', fontSize: '0.85rem', marginTop: '0.25rem' }}>{err}</div>}
+      {err && <div role="alert" style={{ fontSize: 'var(--fs-sm)', marginTop: '0.25rem' }}>{err}</div>}
     </div>
   )
 }
 
 function HandIn({ id, data, onDone }) {
+  const t = useT()
   const { submission } = data
   const [content, setContent] = useState(submission?.content || '')
   const [file, setFile] = useState(null)
@@ -72,7 +83,7 @@ function HandIn({ id, data, onDone }) {
 
   const submit = async (e) => {
     e.preventDefault()
-    if (!content.trim() && !file && !hasOldFile) return setError('Write your answer or attach a file before handing in.')
+    if (!content.trim() && !file && !hasOldFile) return setError(t('student.errWriteOrAttach'))
     setSaving(true); setError('')
     try {
       let uploaded = null
@@ -83,42 +94,43 @@ function HandIn({ id, data, onDone }) {
       })
       onDone()
     } catch (err) {
-      setError(err.message || 'Could not hand in your work. Please try again.')
+      setError(err.message || t('student.errHandIn'))
       setSaving(false)
     }
   }
 
   return (
     <form onSubmit={submit} style={panel}>
-      <h3 style={{ color: C.turquoise, marginBottom: '0.75rem' }}>{resubmitting ? 'Hand in again' : 'Your work'}</h3>
-      <label htmlFor="sub-text" style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.4rem', fontWeight: 600 }}>Answer (optional if you attach a file)</label>
+      <h3 style={{ marginBottom: '0.75rem', fontSize: 'var(--fs-lg)' }}>{t(resubmitting ? 'student.handInAgain' : 'student.yourWork')}</h3>
+      <label htmlFor="sub-text" style={label}>{t('student.answerLabel')}</label>
       <textarea id="sub-text" value={content} onChange={e => setContent(e.target.value)} maxLength={10000} disabled={saving}
-        placeholder="Type your answer here"
-        style={{ ...glassInput, minHeight: '140px', resize: 'vertical', marginBottom: '1rem' }} />
+        placeholder={t('student.answerPlaceholder')}
+        style={{ ...glassInput, minHeight: '9rem', resize: 'vertical', marginBottom: '1rem' }} />
 
-      <label htmlFor="sub-file" style={{ display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.4rem', fontWeight: 600 }}>File (PDF, Word, PowerPoint or image, up to 10MB)</label>
-      <input id="sub-file" ref={fileRef} type="file" accept={ACCEPT} onChange={pick} disabled={saving} style={{ color: 'white', fontSize: '0.9rem' }} />
-      {file && <div style={{ ...muted, marginTop: '0.4rem' }}>Ready to upload: {file.name} ({fmtSize(file.size)})</div>}
+      <label htmlFor="sub-file" style={label}>{t('student.fileLabel')}</label>
+      <input id="sub-file" ref={fileRef} type="file" accept={ACCEPT} onChange={pick} disabled={saving} style={{ color: 'var(--fg)', fontSize: 'var(--fs-sm)', maxWidth: '100%' }} />
+      {file && <div style={{ ...muted, marginTop: '0.4rem', overflowWrap: 'anywhere' }}>{t('student.readyToUpload', { name: file.name, size: fmtSize(file.size) })}</div>}
       {hasOldFile && (
         <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={muted}>Current file: {submission.fileName}</span>
-          <button type="button" onClick={() => setRemoveFile(true)} style={{ ...ghostBtn, color: '#ffb3b3' }}>Remove file</button>
+          <span style={{ ...muted, overflowWrap: 'anywhere' }}>{t('student.currentFile', { name: submission.fileName })}</span>
+          <button type="button" onClick={() => setRemoveFile(true)} style={ghostBtn}>{t('student.removeFile')}</button>
         </div>
       )}
-      {removeFile && <div style={{ ...muted, marginTop: '0.4rem' }}>The current file will be removed when you hand in.</div>}
+      {removeFile && <div style={{ ...muted, marginTop: '0.4rem' }}>{t('student.fileWillBeRemoved')}</div>}
 
       {data.assignment.dueDate && new Date(data.assignment.dueDate).getTime() < Date.now() && submission?.status !== 'Reopened' && (
-        <p style={{ color: '#ffb36b', fontSize: '0.9rem', marginTop: '0.9rem' }}>The due date has passed, so this will be marked late.</p>
+        <p style={{ fontSize: 'var(--fs-sm)', marginTop: '0.9rem', display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}><Icon name="warning" style={{ marginTop: '0.15em' }} /><span style={{ minWidth: 0 }}>{t('student.pastDueWarning')}</span></p>
       )}
-      {error && <p role="alert" style={{ color: '#ffb3b3', fontSize: '0.9rem', marginTop: '0.75rem' }}>{error}</p>}
+      {error && <p role="alert" style={{ fontSize: 'var(--fs-sm)', marginTop: '0.75rem', overflowWrap: 'anywhere' }}>{error}</p>}
       <button type="submit" disabled={saving} style={{ ...glassBtn, width: 'auto', marginTop: '1rem', opacity: saving ? 0.7 : 1 }}>
-        {saving ? 'Handing in...' : resubmitting ? 'Hand in again' : 'Hand in'}
+        {saving ? t('student.handingIn') : t(resubmitting ? 'student.handInAgain' : 'student.handIn')}
       </button>
     </form>
   )
 }
 
 export default function StudentAssignment() {
+  const t = useT()
   const { id } = useParams()
   const navigate = useNavigate()
   const { data, loading, error, reload } = useApiData(`/api/student/assignments/${id}`)
@@ -131,29 +143,30 @@ export default function StudentAssignment() {
   const cd = a?.dueDate ? countdown(a.dueDate, now) : null
 
   return (
-    <StudentPage title={a ? a.title : 'Assignment'} icon="📝" backPath="/student/dashboard" maxWidth={820}>
-      <div style={{ marginBottom: '1.25rem' }}>
-        <button onClick={() => navigate('/student/academics')} style={ghostBtn}>Back to homework</button>
+    <StudentPage title={a ? a.title : t('student.assignment')} icon="terms" backPath="/student/dashboard" maxWidth={820}>
+      <div style={{ marginBottom: 'var(--sp-4)' }}>
+        <button onClick={() => navigate('/student/academics?tab=homework')} style={ghostBtn}>{t('student.backToHomework')}</button>
       </div>
 
       {loading && !data && <SkeletonList />}
-      {error && <div style={{ ...panel, borderColor: 'rgba(255,80,80,0.4)' }}><p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p><button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button></div>}
-      {notice && <p role="status" style={{ color: '#7CFC9A', fontSize: '0.95rem', marginBottom: '1rem' }}>{notice}</p>}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+      {notice && <p role="status" style={{ fontSize: 'var(--fs-md)', marginBottom: '1rem', display: 'flex', gap: '0.4rem', alignItems: 'center' }}><Icon name="check" />{notice}</p>}
 
       {data && (
         <>
           <div style={panel}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-              <div style={muted}>{a.className}{a.dueDate ? ` · Due ${fmtDate(a.dueDate)}` : ' · No due date'}</div>
+              <div style={{ ...muted, minWidth: 0, overflowWrap: 'anywhere' }}>{a.className}{a.dueDate ? ` · ${t('student.dueOn', { date: fmtDate(a.dueDate) })}` : ` · ${t('student.noDueDate')}`}</div>
               <span style={{ color: statusColor(sub ? sub.status : (cd?.late ? 'Overdue' : 'Not submitted')), fontWeight: 700 }}>
-                {sub ? sub.status : (cd?.late ? 'Overdue' : 'Not submitted')}
+                {statusLabel(sub ? sub.status : (cd?.late ? 'Overdue' : 'Not submitted'), t)}
               </span>
             </div>
 
             {cd && !(sub && sub.status !== 'Reopened') && (
               <div style={{ marginTop: '0.9rem' }}>
-                <div style={{ fontSize: '1.6rem', fontWeight: 700, color: cd.late ? '#ff8f8f' : cd.urgent ? '#ffb36b' : C.turquoise }} aria-live="off">
-                  {cd.late ? `${cd.text} overdue` : `${cd.text} left`}
+                <div style={{ fontSize: 'var(--fs-2xl)', fontWeight: 700 }} aria-live="off">
+                  {cd.late ? t('student.cdOverdue', { time: countdownText(cd, t) }) : t('student.cdLeft', { time: countdownText(cd, t) })}
+                  {cd.urgent && <span style={{ ...muted, marginInlineStart: '0.5rem', fontWeight: 400 }}>{t('student.dueSoon')}</span>}
                 </div>
               </div>
             )}
@@ -162,7 +175,7 @@ export default function StudentAssignment() {
 
             {a.attachments.length > 0 && (
               <div style={{ marginTop: '1rem' }}>
-                <div style={{ ...muted, marginBottom: '0.4rem' }}>Files from your teacher</div>
+                <div style={{ ...muted, marginBottom: '0.4rem' }}>{t('student.filesFromTeacher')}</div>
                 {a.attachments.map(f => (
                   <FileChip key={f.index} name={f.name} size={f.size} mime={f.mime} onOpen={() => openAssignmentFile(`/api/assignments/${a.id}/attachments/${f.index}/link`)} />
                 ))}
@@ -172,35 +185,39 @@ export default function StudentAssignment() {
 
           {sub && (
             <div style={panel}>
-              <h3 style={{ color: C.turquoise, marginBottom: '0.5rem' }}>
-                {sub.status === 'Reopened' ? 'Sent back for revision' : 'What you handed in'}
+              <h3 style={{ marginBottom: '0.5rem', fontSize: 'var(--fs-lg)' }}>
+                {t(sub.status === 'Reopened' ? 'student.sentBack' : 'student.whatYouHandedIn')}
               </h3>
               <div style={{ ...muted, marginBottom: '0.6rem' }}>
-                {sub.status === 'Reopened' ? 'Your last version, handed in' : 'Handed in'} {fmtDate(sub.submittedAt)}{sub.isLate ? ' · Late' : ''}
+                {t(sub.status === 'Reopened' ? 'student.lastVersionHandedIn' : 'student.handedIn', { date: fmtDate(sub.submittedAt) })}{sub.isLate ? ` · ${t('student.status_late')}` : ''}
               </div>
-              {sub.content && <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{sub.content}</div>}
+              {sub.content && <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '0.75rem', marginBottom: '0.75rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{sub.content}</div>}
               {sub.fileName && <FileChip name={sub.fileName} size={sub.fileSize} mime={sub.mimeType} onOpen={() => openAssignmentFile(`/api/student/assignments/${a.id}/submission/file-link`)} />}
               {sub.grade !== null && (
                 <div style={{ marginTop: '0.75rem' }}>
-                  <span style={muted}>Grade </span>
-                  <strong style={{ color: gradeColor(sub.grade), fontSize: '1.4rem' }}>{sub.grade}%</strong>
+                  <span style={muted}>{t('student.grade')} </span>
+                  <strong style={{ fontSize: 'var(--fs-xl)' }}>{sub.grade}%</strong>
+                  {gradeLevelKey(sub.grade) && <span style={{ ...muted, marginInlineStart: '0.4rem' }}>{t(gradeLevelKey(sub.grade))}</span>}
+                  <div role="presentation" style={{ height: '0.5rem', borderRadius: 'var(--radius-pill)', border: '1px solid var(--border-strong)', overflow: 'hidden', marginTop: '0.4rem' }}>
+                    <div style={{ width: `${Math.max(0, Math.min(100, sub.grade))}%`, height: '100%', background: gradeBarFill(sub.grade) }} />
+                  </div>
                 </div>
               )}
               {sub.feedback && (
                 <div style={{ marginTop: '0.6rem' }}>
-                  <span style={{ color: C.turquoise }}>{sub.status === 'Reopened' ? 'Your teacher asked you to fix: ' : 'Teacher feedback: '}</span>
+                  <span style={{ fontWeight: 700 }}>{t(sub.status === 'Reopened' ? 'student.teacherAskedFix' : 'student.teacherFeedback')}: </span>
                   <span style={{ overflowWrap: 'anywhere' }}>{sub.feedback}</span>
                 </div>
               )}
             </div>
           )}
 
-          {!data.isVerified && <div style={{ ...panel, ...muted }}>Your account needs to be verified by an admin before you can hand in work.</div>}
+          {!data.isVerified && <div style={{ ...panel, ...muted }}>{t('student.needsVerifiedToHandIn')}</div>}
           {data.isVerified && data.canSubmit && (
-            <HandIn key={sub?.submittedAt || 'new'} id={id} data={data} onDone={() => { setNotice('Your work was handed in.'); reload() }} />
+            <HandIn key={sub?.submittedAt || 'new'} id={id} data={data} onDone={() => { setNotice(t('student.workHandedIn')); reload() }} />
           )}
           {data.isVerified && !data.canSubmit && (
-            <div style={{ ...panel, ...muted }}>This work has been graded. If you need to change it, ask your teacher to reopen it.</div>
+            <div style={{ ...panel, ...muted }}>{t('student.gradedLocked')}</div>
           )}
         </>
       )}
