@@ -1,13 +1,20 @@
 import React, { useState } from 'react'
 import StudentPage from '../../components/student/StudentPage'
 import ResourceGrid from '../../components/resources/ResourceGrid'
+import { ErrorBox, muted, panel } from '../../components/parent/parentUi'
+import { SegmentedTabs } from '../../components/tutor/tutorUi'
+import SkeletonList from '../../components/shared/Skeleton'
 import { useApiData } from '../../hooks/useApiData'
-import { glassCard, glassInput, glassBtn, C } from '../../styles/glass'
+import { useT } from '../../i18n'
+import { glassInput } from '../../styles/glass'
+import { gradeLabel, subjectLabel } from '../../config/studentOptions'
 
-const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
-const opt = { background: '#001F3F' }
+const select = { ...glassInput, width: 'auto', flex: '1 1 12rem', maxWidth: '100%', minWidth: 0 }
+const empty = { ...panel, textAlign: 'center', padding: 'var(--sp-6) var(--sp-4)', ...muted }
 
+// Textbooks, study materials and past papers added by teachers
 export default function StudentResources() {
+  const t = useT()
   const { data, loading, error, reload } = useApiData('/api/resources')
   const [tab, setTab] = useState('all') // 'all' | 'papers'
   const [subject, setSubject] = useState('')
@@ -24,54 +31,36 @@ export default function StudentResources() {
     (!subject || r.subject === subject) &&
     (!grade || !r.grade || r.grade === grade))
 
-  const tabBtn = (key, label) => (
-    <button key={key} onClick={() => setTab(key)}
-      style={{ border: 'none', cursor: 'pointer', padding: '0.55rem 1.3rem', borderRadius: '8px', fontWeight: 600,
-        background: tab === key ? 'rgba(var(--color-primary-rgb),0.85)' : 'rgba(255,255,255,0.08)',
-        color: tab === key ? C.navy : 'rgba(255,255,255,0.7)' }}>
-      {label}
-    </button>
-  )
+  const tabs = [
+    { key: 'all', label: t('student.allMaterials') },
+    { key: 'papers', label: t('student.pastPapers', { n: paperCount }) },
+  ]
 
   return (
-    <StudentPage title="Learning Resources" icon="📖">
-      {loading ? <p style={muted}>Loading...</p> : error ? (
-        <div style={{ ...glassCard, padding: '1rem 1.25rem', borderColor: 'rgba(255,80,80,0.4)' }}>
-          <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
-          <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
-        </div>
-      ) : resources.length === 0 ? (
-        <div style={{ ...glassCard, padding: '2rem', textAlign: 'center', ...muted }}>
-          Your teachers haven't added any study materials yet. Check back soon.
-        </div>
+    <StudentPage title={t('shell.f_textbooks')} icon="file">
+      {loading ? <SkeletonList /> : error ? <ErrorBox message={error} onRetry={reload} /> : resources.length === 0 ? (
+        <div style={empty}>{t('student.noMaterials')}</div>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-            {tabBtn('all', 'All materials')}
-            {tabBtn('papers', `Past papers (${paperCount})`)}
-          </div>
+          <SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />
 
-          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: 'var(--sp-4)', flexWrap: 'wrap' }}>
             {subjects.length > 1 && (
-              <select aria-label="Filter by subject" value={subject} onChange={e => setSubject(e.target.value)}
-                style={{ ...glassInput, width: 'auto', minWidth: '200px' }}>
-                <option value="" style={opt}>All subjects</option>
-                {subjects.map(s => <option key={s} value={s} style={opt}>{s}</option>)}
+              <select aria-label={t('student.filterSubject')} value={subject} onChange={e => setSubject(e.target.value)} style={select}>
+                <option value="">{t('student.allSubjects')}</option>
+                {subjects.map(s => <option key={s} value={s}>{subjectLabel(s, t)}</option>)}
               </select>
             )}
             {grades.length > 1 && (
-              <select aria-label="Filter by grade" value={grade} onChange={e => setGrade(e.target.value)}
-                style={{ ...glassInput, width: 'auto', minWidth: '160px' }}>
-                <option value="" style={opt}>All grades</option>
-                {grades.map(g => <option key={g} value={g} style={opt}>Grade {g}</option>)}
+              <select aria-label={t('student.filterGrade')} value={grade} onChange={e => setGrade(e.target.value)} style={select}>
+                <option value="">{t('student.allGrades')}</option>
+                {grades.map(g => <option key={g} value={g}>{gradeLabel(g, t)}</option>)}
               </select>
             )}
           </div>
 
           {shown.length === 0 ? (
-            <div style={{ ...glassCard, padding: '2rem', textAlign: 'center', ...muted }}>
-              {tab === 'papers' && paperCount === 0 ? 'No past papers have been added yet.' : 'Nothing matches those filters.'}
-            </div>
+            <div style={empty}>{t(tab === 'papers' && paperCount === 0 ? 'student.noPastPapers' : 'student.noMatch')}</div>
           ) : (
             <ResourceGrid resources={shown} />
           )}
