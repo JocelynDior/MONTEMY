@@ -2,115 +2,70 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import DashboardShell from '../../components/layout/DashboardShell'
 import StudentProfileForm from '../../components/student/StudentProfileForm'
-import ParentLinks from '../../components/student/ParentLinks'
 import NextTutorSession from '../../components/student/NextTutorSession'
+import { Chip, ErrorBox, ghostBtn, muted, panel, panelTitle } from '../../components/parent/parentUi'
 import { useStudentOverview } from '../../hooks/useStudentOverview'
-import { dueIn, fmtDate, gradeColor, sortByDue, statusColor } from '../../components/student/studentUtils'
-import { glassCard, glassBtn, C } from '../../styles/glass'
+import { useT } from '../../i18n'
+import { dueIn, fmtDate, gradeLevelKey, sortByDue, statusColor, statusLabel } from '../../components/student/studentUtils'
+import { gradeLabel } from '../../config/studentOptions'
+import { glassBtn } from '../../styles/glass'
 
-const cards = [
-  { icon: '📚', title: 'My Subjects', description: 'View your subjects and learning materials', path: '/student/academics', requiresVerification: true },
-  { icon: '📅', title: 'Schedule', description: 'View your class timetable and schedule', path: '/student/schedule', requiresVerification: true },
-  { icon: '📝', title: 'Homework', description: 'View your homework assignments', path: '/student/academics', requiresVerification: true },
-  { icon: '📊', title: 'My Progress', description: 'Track your academic performance and grades', path: '/student/academics', requiresVerification: true },
-  { icon: '📖', title: 'Resources', description: 'Access past papers, textbooks and study materials', path: '/student/resources', requiresVerification: false },
-  { icon: '🤖', title: 'AI Tutor', description: 'Get 24/7 help from your personal AI tutor', path: '/student/ai-tutor', requiresVerification: false },
-  { icon: '🎉', title: 'Events', description: 'School events and RSVP', path: '/events', requiresVerification: false },
-  { icon: '💬', title: 'Messages', description: 'Communicate with teachers and classmates', path: '/messages', requiresVerification: true },
-  { icon: '⚙️', title: 'Contact Admin', description: 'Get help from Montemy support', path: '/student/contact-admin', requiresVerification: false },
-]
-
-const panel = { ...glassCard, padding: '1.25rem' }
-const panelTitle = { color: C.turquoise, fontSize: '1.05rem', marginBottom: '0.75rem' }
-const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
-
-function Chip({ children, color }) {
-  return (
-    <span style={{ display: 'inline-block', padding: '0.15rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, color, border: `1px solid ${color}`, background: 'rgba(0,0,0,0.15)' }}>
-      {children}
-    </span>
-  )
-}
-
+// The circles come from config/roleFeatures.js (DashboardShell reads the role). This page only adds the live summary.
 function StudentSummary() {
+  const t = useT()
   const navigate = useNavigate()
   const { data, loading, error, reload } = useStudentOverview()
   const [editing, setEditing] = useState(false)
 
-  if (loading) return <p style={{ ...muted, marginTop: '1rem' }}>Loading your overview...</p>
-
-  if (error) {
-    return (
-      <div style={{ ...panel, marginTop: '1rem', borderColor: 'rgba(255,80,80,0.4)' }}>
-        <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
-        <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
-      </div>
-    )
-  }
+  if (loading) return <p style={{ ...muted, marginTop: 'var(--sp-4)' }}>{t('student.loadingOverview')}</p>
+  if (error) return <div style={{ marginTop: 'var(--sp-4)' }}><ErrorBox message={error} onRetry={reload} /></div>
 
   const { profile, org, isVerified, classInfo, homework, graded, average, events, needsSetup } = data
   const todo = sortByDue(homework.filter(h => h.status === 'Not submitted' || h.status === 'Overdue')).slice(0, 3)
   const recent = [...graded].reverse().slice(0, 3)
+  const levelKey = average === null ? null : gradeLevelKey(average)
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem', marginTop: '1.25rem' }}>
-      {/* Who and where */}
+    <div style={{ display: 'grid', gap: 'var(--sp-4)', marginTop: 'var(--sp-4)', minWidth: 0 }}>
       <div style={{ ...panel, display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontSize: '1.15rem', fontWeight: 700 }}>{org?.name || 'No school linked'}</div>
-          <div style={{ ...muted, marginTop: '0.25rem' }}>
-            {profile.grade ? `Grade ${profile.grade}` : 'Grade not set'}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, overflowWrap: 'anywhere' }}>{org?.name || t('student.noSchool')}</div>
+          <div style={{ ...muted, marginTop: '0.25rem', overflowWrap: 'anywhere' }}>
+            {profile.grade ? gradeLabel(profile.grade, t) : t('student.gradeNotSet')}
             {classInfo ? ` · ${classInfo.name}` : ''}
             {classInfo?.teacherName ? ` · ${classInfo.teacherName}` : ''}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          <Chip color={isVerified ? '#7CFC9A' : '#ffe08a'}>{isVerified ? 'Verified' : 'Awaiting verification'}</Chip>
-          {!needsSetup && (
-            <button onClick={() => setEditing(e => !e)}
-              style={{ background: 'none', border: 'none', color: C.turquoise, textDecoration: 'underline', cursor: 'pointer', fontSize: '0.85rem' }}>
-              {editing ? 'Close' : 'Edit profile'}
-            </button>
-          )}
+          <Chip color={isVerified ? 'var(--fg)' : 'var(--fg-muted)'}>{t(isVerified ? 'student.verified' : 'student.awaitingVerification')}</Chip>
+          {!needsSetup && <button onClick={() => setEditing(e => !e)} aria-expanded={editing} style={ghostBtn}>{editing ? t('common.close') : t('student.editProfile')}</button>}
         </div>
       </div>
 
-      {/* Complete / edit profile */}
       {(needsSetup || editing) && (
         <div style={panel}>
-          <h3 style={panelTitle}>{needsSetup ? 'Complete your profile' : 'Edit your profile'}</h3>
-          {needsSetup && (
-            <p style={{ ...muted, marginBottom: '1rem' }}>
-              Tell us your grade, subjects and class so your homework and the AI Tutor fit you.
-            </p>
-          )}
-          <StudentProfileForm
-            initial={profile}
-            onSaved={() => { setEditing(false); reload() }}
-            onCancel={editing ? () => setEditing(false) : undefined}
-          />
+          <h3 style={panelTitle}>{t(needsSetup ? 'student.completeProfile' : 'student.editYourProfile')}</h3>
+          {needsSetup && <p style={{ ...muted, marginBottom: '1rem' }}>{t('student.completeProfileHelp')}</p>}
+          <StudentProfileForm initial={profile} onSaved={() => { setEditing(false); reload() }} onCancel={editing ? () => setEditing(false) : undefined} />
         </div>
       )}
 
-      {/* Numbers + lists */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 16rem), 1fr))', gap: 'var(--sp-4)' }}>
         <div style={panel}>
-          <h3 style={panelTitle}>Overall average</h3>
-          {average === null
-            ? <p style={muted}>No grades yet.</p>
-            : <div style={{ fontSize: '2.4rem', fontWeight: 700, color: gradeColor(average) }}>{average}%</div>}
-          {graded.length > 0 && <p style={{ ...muted, marginTop: '0.25rem' }}>from {graded.length} graded assignment{graded.length === 1 ? '' : 's'}</p>}
+          <h3 style={panelTitle}>{t('student.overallAverage')}</h3>
+          {average === null ? <p style={muted}>{t('student.noGradesYet')}</p> : (
+            <div style={{ fontSize: 'var(--fs-3xl)', fontWeight: 700 }}>{average}%{levelKey && <span style={{ ...muted, marginInlineStart: '0.5rem' }}>{t(levelKey)}</span>}</div>
+          )}
+          {graded.length > 0 && <p style={{ ...muted, marginTop: '0.25rem' }}>{t('student.fromGraded', { n: graded.length })}</p>}
         </div>
 
         <div style={panel}>
-          <h3 style={panelTitle}>Homework to do</h3>
-          {todo.length === 0 ? (
-            <p style={muted}>{classInfo ? "You're all caught up." : 'Choose a class to see homework.'}</p>
-          ) : todo.map(h => (
-            <div key={h.id} style={{ marginBottom: '0.75rem' }}>
-              <div style={{ fontWeight: 600 }}>{h.title}</div>
-              <div style={{ ...muted, fontSize: '0.8rem' }}>
-                <span style={{ color: statusColor(h.status) }}>{dueIn(h.dueDate) || h.status}</span>
+          <h3 style={panelTitle}>{t('student.homeworkToDo')}</h3>
+          {todo.length === 0 ? <p style={muted}>{t(classInfo ? 'student.allCaughtUp' : 'student.chooseClassHomework')}</p> : todo.map(h => (
+            <div key={h.id} style={{ marginBottom: '0.75rem', minWidth: 0 }}>
+              <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{h.title}</div>
+              <div style={{ ...muted, fontSize: 'var(--fs-xs)' }}>
+                <span style={{ color: statusColor(h.status), fontWeight: 700 }}>{dueIn(h.dueDate, t) || statusLabel(h.status, t)}</span>
                 {h.dueDate ? ` · ${fmtDate(h.dueDate)}` : ''}
               </div>
             </div>
@@ -118,31 +73,28 @@ function StudentSummary() {
         </div>
 
         <div style={panel}>
-          <h3 style={panelTitle}>Recent grades</h3>
-          {recent.length === 0 ? <p style={muted}>Nothing graded yet.</p> : recent.map(g => (
+          <h3 style={panelTitle}>{t('student.recentGrades')}</h3>
+          {recent.length === 0 ? <p style={muted}>{t('student.nothingGraded')}</p> : recent.map(g => (
             <div key={g.assignmentId} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.6rem' }}>
-              <span>{g.title}</span>
-              <strong style={{ color: gradeColor(g.grade) }}>{g.grade}%</strong>
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{g.title}</span>
+              <strong>{g.grade}%</strong>
             </div>
           ))}
         </div>
 
         <div style={panel}>
-          <h3 style={panelTitle}>Coming up at school</h3>
-          {events.length === 0 ? <p style={muted}>No upcoming events.</p> : events.slice(0, 3).map(ev => (
-            <div key={ev.id} style={{ marginBottom: '0.6rem' }}>
-              <div style={{ fontWeight: 600 }}>{ev.title}</div>
-              <div style={{ ...muted, fontSize: '0.8rem' }}>{fmtDate(ev.date)}{ev.location ? ` · ${ev.location}` : ''}</div>
+          <h3 style={panelTitle}>{t('student.comingUp')}</h3>
+          {events.length === 0 ? <p style={muted}>{t('student.noEvents')}</p> : events.slice(0, 3).map(ev => (
+            <div key={ev.id} style={{ marginBottom: '0.6rem', minWidth: 0 }}>
+              <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{ev.title}</div>
+              <div style={{ ...muted, fontSize: 'var(--fs-xs)' }}>{fmtDate(ev.date)}{ev.location ? ` · ${ev.location}` : ''}</div>
             </div>
           ))}
         </div>
       </div>
 
       <div>
-        <button onClick={() => navigate('/student/academics')}
-          style={{ ...glassBtn, width: 'auto', padding: '0.6rem 1.4rem' }}>
-          Open my academics
-        </button>
+        <button onClick={() => navigate('/student/academics')} style={{ ...glassBtn, width: 'auto', padding: '0.6rem 1.4rem' }}>{t('student.openAcademics')}</button>
       </div>
     </div>
   )
@@ -150,8 +102,7 @@ function StudentSummary() {
 
 export default function StudentDashboard() {
   return (
-    <DashboardShell role="student" cards={cards}>
-      <ParentLinks />
+    <DashboardShell role="student">
       <NextTutorSession />
       <StudentSummary />
     </DashboardShell>
