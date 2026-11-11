@@ -1,11 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import { apiFetch } from '../../api/apiClient'
 import { fmtDate } from '../student/studentUtils'
+import { gradeLabel } from '../../config/studentOptions'
 import { glassInput } from '../../styles/glass'
+import { useT } from '../../i18n'
 import { Chip, ghostBtn, muted, panel, panelTitle, smallBtn } from './parentUi'
+
+const note = { fontSize: 'var(--fs-sm)', marginTop: '0.75rem', overflowWrap: 'anywhere' }
 
 // Search for a child at the parent's school and ask to be linked. Also lists waiting/declined requests.
 export default function AddChildPanel({ requests, isVerified, onChanged, startOpen = false }) {
+  const t = useT()
   const [open, setOpen] = useState(startOpen)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -37,7 +42,7 @@ export default function AddChildPanel({ requests, isVerified, onChanged, startOp
     setBusyId(student.id); setError(''); setMessage('')
     try {
       await apiFetch('/api/parent/link-requests', { method: 'POST', body: { studentId: student.id } })
-      setMessage(`Request sent. ${student.name} (or a school admin) needs to accept it before you can see their progress.`)
+      setMessage(t('parent.requestSent', { name: student.name }))
       setResults(list => list.map(s => s.id === student.id ? { ...s, status: 'pending' } : s))
       onChanged?.()
     } catch (err) {
@@ -57,26 +62,30 @@ export default function AddChildPanel({ requests, isVerified, onChanged, startOp
     setBusyId(null)
   }
 
+  const row = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', minWidth: 0 }
+
   return (
     <div style={panel}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-        <h3 style={{ ...panelTitle, marginBottom: 0 }}>Link a child</h3>
-        <button onClick={() => setOpen(o => !o)} style={ghostBtn}>{open ? 'Close' : 'Add a child'}</button>
+      <div style={{ ...row, gap: '1rem' }}>
+        <h3 style={{ ...panelTitle, marginBottom: 0 }}>{t('parent.linkChild')}</h3>
+        <button onClick={() => setOpen(o => !o)} aria-expanded={open} style={ghostBtn}>{open ? t('common.close') : t('parent.addChild')}</button>
       </div>
 
       {requests.length > 0 && (
         <div style={{ marginTop: '1rem', display: 'grid', gap: '0.6rem' }}>
           {requests.map(r => (
-            <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <div>
+            <div key={r.id} style={row}>
+              <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
                 <strong>{r.studentName}</strong>
-                <span style={{ ...muted, fontSize: '0.8rem' }}>{r.grade ? ` · Grade ${r.grade}` : ''} · sent {fmtDate(r.createdAt, false)}</span>
+                <span style={{ ...muted, fontSize: 'var(--fs-xs)' }}>
+                  {r.grade ? ` · ${gradeLabel(r.grade, t)}` : ''} · {t('parent.sentOn', { date: fmtDate(r.createdAt, false) })}
+                </span>
               </div>
-              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 {r.status === 'pending'
-                  ? <><Chip color="#ffe08a">Waiting for approval</Chip>
-                      <button disabled={busyId === r.id} onClick={() => cancel(r.id)} style={ghostBtn}>Cancel</button></>
-                  : <Chip color="#ff8f8f">Declined</Chip>}
+                  ? <><Chip>{t('parent.waiting')}</Chip>
+                      <button disabled={busyId === r.id} onClick={() => cancel(r.id)} style={ghostBtn}>{t('common.cancel')}</button></>
+                  : <Chip color="var(--fg-muted)">{t('parent.declined')}</Chip>}
               </div>
             </div>
           ))}
@@ -85,32 +94,25 @@ export default function AddChildPanel({ requests, isVerified, onChanged, startOp
 
       {open && (
         <div style={{ marginTop: '1rem' }}>
-          {!isVerified && (
-            <p style={{ ...muted, color: '#ffe08a', marginBottom: '0.75rem' }}>
-              Your account needs to be verified by an admin before you can link a child.
-            </p>
-          )}
+          {!isVerified && <p style={{ ...muted, marginBottom: '0.75rem', color: 'var(--fg)' }}>{t('parent.needsVerification')}</p>}
           <input value={query} onChange={e => setQuery(e.target.value)} disabled={!isVerified}
-            placeholder="Type your child's name (at least 2 letters)"
-            style={glassInput} aria-label="Search for your child by name" />
-          <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.4rem' }}>
-            Only students at your school are shown. Your child or a school admin must accept your request.
-          </p>
+            placeholder={t('parent.searchPlaceholder')} style={glassInput} aria-label={t('parent.searchLabel')} />
+          <p style={{ ...muted, fontSize: 'var(--fs-xs)', marginTop: '0.4rem' }}>{t('parent.searchHelp')}</p>
 
-          {searching && <p style={{ ...muted, marginTop: '0.75rem' }}>Searching...</p>}
+          {searching && <p style={{ ...muted, marginTop: '0.75rem' }}>{t('parent.searching')}</p>}
           {!searching && query.trim().length >= 2 && results.length === 0 && !error && (
-            <p style={{ ...muted, marginTop: '0.75rem' }}>No students found with that name at your school.</p>
+            <p style={{ ...muted, marginTop: '0.75rem' }}>{t('parent.noStudentsFound')}</p>
           )}
 
           <div style={{ display: 'grid', gap: '0.6rem', marginTop: '0.75rem' }}>
             {results.map(s => (
-              <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <span>{s.name}{s.grade ? <span style={muted}> · Grade {s.grade}</span> : null}</span>
-                {s.status === 'linked' ? <Chip color="#7CFC9A">Linked</Chip>
-                  : s.status === 'pending' ? <Chip color="#ffe08a">Waiting for approval</Chip>
-                  : s.status === 'rejected' ? <Chip color="#ff8f8f">Declined</Chip>
+              <div key={s.id} style={row}>
+                <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{s.name}{s.grade ? <span style={muted}> · {gradeLabel(s.grade, t)}</span> : null}</span>
+                {s.status === 'linked' ? <Chip>{t('parent.linked')}</Chip>
+                  : s.status === 'pending' ? <Chip>{t('parent.waiting')}</Chip>
+                  : s.status === 'rejected' ? <Chip color="var(--fg-muted)">{t('parent.declined')}</Chip>
                   : <button disabled={busyId === s.id} onClick={() => sendRequest(s)} style={smallBtn}>
-                      {busyId === s.id ? 'Sending...' : 'Send request'}
+                      {busyId === s.id ? t('parent.sending') : t('parent.sendRequest')}
                     </button>}
               </div>
             ))}
@@ -118,8 +120,8 @@ export default function AddChildPanel({ requests, isVerified, onChanged, startOp
         </div>
       )}
 
-      {message && <p style={{ color: '#7CFC9A', fontSize: '0.9rem', marginTop: '0.75rem' }}>{message}</p>}
-      {error && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginTop: '0.75rem' }}>{error}</p>}
+      {message && <p role="status" style={note}>{message}</p>}
+      {error && <p role="alert" style={note}>{error}</p>}
     </div>
   )
 }
