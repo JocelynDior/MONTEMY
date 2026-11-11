@@ -2,11 +2,12 @@ import React, { useState } from 'react'
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { useT } from '../../i18n'
+import Icon from '../shared/Icon'
 import { fmtDate } from './studentUtils'
 import { ghostBtn, muted, panel, panelTitle, smallBtn } from '../parent/parentUi'
 
-// Shown on the student dashboard: parents asking to be linked, and parents already linked.
-// Renders nothing when there is nothing to show.
+// Lives in Settings (Linked parents), not on the home page: parents asking to be linked, and parents already linked.
+// With embedded it is drawn without its own panel and shows a short note when there is nothing to show.
 export default function ParentLinks({ embedded = false }) {
   const t = useT()
   const { data, error, reload } = useApiData('/api/student/link-requests')
@@ -24,7 +25,7 @@ export default function ParentLinks({ embedded = false }) {
     apiFetch(`/api/student/link-requests/${req.id}/decision`, { method: 'POST', body: { action } }))
   const remove = (p) => run(p.requestId, () => apiFetch(`/api/student/parents/${p.parentId}`, { method: 'DELETE' }))
 
-  if (error) return <p role="alert" style={muted}>{error}</p>
+  if (error) return <p role="alert" style={{ ...muted, display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}><Icon name="warning" style={{ marginTop: '0.15em' }} /><span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{error}</span></p>
   if (!data) return null
   if (data.pending.length === 0 && data.parents.length === 0) return embedded ? <p style={muted}>{t('settings.noLinks')}</p> : null
 
@@ -38,12 +39,12 @@ export default function ParentLinks({ embedded = false }) {
           </p>
           <div style={{ display: 'grid', gap: '0.8rem' }}>
             {data.pending.map(r => (
-              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <div>
+              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', minWidth: 0 }}>
+                <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
                   <strong>{r.parentName}</strong>
                   <span style={{ ...muted, fontSize: 'var(--fs-xs)' }}> · {t('settings.askedOn', { date: fmtDate(r.createdAt, false) })}</span>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <button disabled={busyId === r.id} onClick={() => decide(r, 'accept')} style={smallBtn}>{t('settings.accept')}</button>
                   <button disabled={busyId === r.id} onClick={() => decide(r, 'reject')}
                     style={ghostBtn}>{t('settings.decline')}</button>
@@ -58,8 +59,8 @@ export default function ParentLinks({ embedded = false }) {
         <div style={embedded ? { display: 'grid', gap: '0.7rem' } : { ...panel, display: 'grid', gap: '0.7rem' }}>
             {!embedded && <h3 style={panelTitle}>{t('settings.linkedParents')}</h3>}
             {data.parents.map(p => (
-              <div key={p.requestId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <span>{p.parentName}</span>
+              <div key={p.requestId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', minWidth: 0 }}>
+                <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{p.parentName}</span>
                 {confirmRemove === p.requestId ? (
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 'var(--fs-sm)' }}>{t('settings.willLoseAccess')}</span>
@@ -75,7 +76,7 @@ export default function ParentLinks({ embedded = false }) {
         </div>
       )}
 
-      {actionError && <p role="alert" style={{ fontSize: 'var(--fs-sm)' }}>{actionError}</p>}
+      {actionError && <p role="alert" style={{ fontSize: 'var(--fs-sm)', overflowWrap: 'anywhere' }}>{actionError}</p>}
     </div>
   )
 }
