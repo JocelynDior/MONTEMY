@@ -1,139 +1,167 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import TeacherPage from '../../components/teacher/TeacherPage'
+import Icon from '../../components/shared/Icon'
+import SkeletonList from '../../components/shared/Skeleton'
+import { ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
 import { apiFetch } from '../../api/apiClient'
+import { useT } from '../../i18n'
 import { GRADES, CLASS_LETTERS } from '../../config/studentOptions'
-import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
+import { glassBtn, glassCard, glassInput } from '../../styles/glass'
 
-const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
-const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
-const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
-const ghostBtn = { ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSize: '0.9rem', background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }
-
-export default function TeacherClasses() {
-  const navigate = useNavigate()
-  const { data, loading, error, reload } = useApiData('/api/teacher/classes')
-  const [open, setOpen] = useState(null)
+function AddClassForm({ onSave, onCancel, t }) {
   const [grade, setGrade] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [actionError, setActionError] = useState('')
+  const [letter, setLetter] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
 
-  const classes = data?.classes || []
-  const have = new Set(classes.map(c => c.name))
-
-  const add = async (letter) => {
-    setActionError('')
-    setBusy(true)
+  async function submit(e) {
+    e.preventDefault()
+    if (!grade) return setErr(t('teacher.errClassGrade'))
+    if (!letter) return setErr(t('teacher.errClassLetter'))
+    setSaving(true); setErr(null)
     try {
-      await apiFetch('/api/teacher/classes', { method: 'POST', body: { grade, letter } })
-      reload()
-    } catch (err) {
-      setActionError(err.message || 'Could not add the class.')
+      const res = await apiFetch('/api/teacher/classes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grade, letter }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      onSave()
+    } catch (ex) {
+      setErr(ex.message || t('common.somethingWentWrong'))
     } finally {
-      setBusy(false)
+      setSaving(false)
     }
   }
 
-  const remove = async (c) => {
-    if (!window.confirm(`Remove ${c.name} from your list? Its students and assignments are kept, and you can add it back any time.`)) return
-    setActionError('')
-    setBusy(true)
+  const lbl = { display: 'block', fontSize: 'var(--fs-sm)', fontWeight: 600, marginBottom: '0.3rem', color: 'var(--fg-muted)' }
+  const inp = { ...glassInput, width: '100%', boxSizing: 'border-box', marginBottom: 'var(--sp-2)' }
+
+  return (
+    <form onSubmit={submit} style={{ ...glassCard, padding: 'var(--sp-4)', marginBottom: 'var(--sp-4)' }}>
+      {err && <ErrorBox message={err} />}
+      <label style={lbl}>{t('teacher.grade')}
+        <select value={grade} onChange={(e) => setGrade(e.target.value)} style={inp} required>
+          <option value="">{t('teacher.chooseGrade')}</option>
+          {GRADES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+        </select>
+      </label>
+      <label style={lbl}>{t('teacher.classLetter')}
+        <select value={letter} onChange={(e) => setLetter(e.target.value)} style={inp} required>
+          <option value="">{t('teacher.chooseLetter')}</option>
+          {CLASS_LETTERS.map((l) => <option key={l} value={l}>{l}</option>)}
+        </select>
+      </label>
+      <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+        <button type="submit" disabled={saving} style={glassBtn}>{saving ? t('settings.saving') : t('teacher.addClass')}</button>
+        <button type="button" onClick={onCancel} style={ghostBtn}>{t('common.cancel')}</button>
+      </div>
+    </form>
+  )
+}
+
+function ClassCard({ cls, onDelete, t }) {
+  const [expanded, setExpanded] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+
+  return (
+    <div style={{ ...panel, marginBottom: 'var(--sp-3)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', flexWrap: 'wrap', minWidth: 0 }}>
+        <button
+          onClick={() => setExpanded((o) => !o)}
+          style={{ flex: 1, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'start', padding: 0, minWidth: 0 }}
+          aria-expanded={expanded}
+        >
+          <span style={{ fontWeight: 700, fontSize: 'var(--fs-lg)' }}>{cls.name}</span>
+          <span style={{ ...muted, fontSize: 'var(--fs-sm)', marginInlineStart: 'var(--sp-2)' }}>
+            {t('teacher.studentCount', { n: cls.studentCount ?? 0 })}
+          </span>
+        </button>
+        <button
+          style={ghostBtn}
+          onClick={() => setExpanded((o) => !o)}
+          aria-label={expanded ? t('common.close') : t('teacher.viewStudents')}
+        >
+          <Icon name={expanded ? 'chevron' : 'users'} size={14} />
+        </button>
+        {confirmDel ? (
+          <>
+            <button style={smallBtn} onClick={() => onDelete(cls.id)} aria-label={t('common.confirm')}>
+              <Icon name="check" size={14} />
+            </button>
+            <button style={ghostBtn} onClick={() => setConfirmDel(false)} aria-label={t('common.cancel')}>
+              <Icon name="close" size={14} />
+            </button>
+          </>
+        ) : (
+          <button style={ghostBtn} onClick={() => setConfirmDel(true)} aria-label={t('common.delete')}>
+            <Icon name="trash" size={14} />
+          </button>
+        )}
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: 'var(--sp-3)', borderTop: '1px solid var(--border)', paddingTop: 'var(--sp-3)' }}>
+          {cls.students?.length
+            ? cls.students.map((s) => (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', padding: 'var(--sp-1) 0', borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-sm)' }}>
+                  <Icon name="profile" size={14} />
+                  <span style={{ flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>{s.name}</span>
+                </div>
+              ))
+            : <p style={muted}>{t('teacher.noStudentsInClass')}</p>
+          }
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function TeacherClasses() {
+  const t = useT('teacher')
+  const { data, loading, error, reload } = useApiData('/api/teacher/classes')
+  const [adding, setAdding] = useState(false)
+
+  async function deleteClass(id) {
     try {
-      await apiFetch(`/api/teacher/classes/${c.id}`, { method: 'DELETE' })
-      if (open === c.id) setOpen(null)
+      const res = await apiFetch(`/api/teacher/classes/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
       reload()
-    } catch (err) {
-      setActionError(err.message || 'Could not remove the class.')
-    } finally {
-      setBusy(false)
+    } catch {
+      reload()
     }
   }
 
   return (
-    <TeacherPage title="My Classes" icon="🏫">
-      {loading && <p style={muted}>Loading...</p>}
+    <TeacherPage title={t('shell.f_classes')}>
+      {loading && <SkeletonList />}
+      {error && <ErrorBox message={error} onRetry={reload} />}
 
-      {error && (
-        <div style={{ ...panel, borderColor: 'rgba(255,80,80,0.4)' }}>
-          <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
-          <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
-        </div>
+      {data?.canWrite && !adding && (
+        <button
+          style={{ ...glassBtn, marginBottom: 'var(--sp-4)', display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-1)' }}
+          onClick={() => setAdding(true)}
+        >
+          <Icon name="plus" size={14} /> {t('teacher.addClass')}
+        </button>
       )}
 
-      {data && (
-        <div style={panel}>
-          <h3 style={{ color: C.turquoise, marginBottom: '0.75rem' }}>Add a class</h3>
-          <label style={labelStyle}>Grade</label>
-          <select style={glassInput} value={grade} onChange={e => setGrade(e.target.value)}>
-            <option value="" style={{ background: '#001F3F' }}>Choose a grade</option>
-            {GRADES.map(g => <option key={g} value={g} style={{ background: '#001F3F' }}>Grade {g}</option>)}
-          </select>
-
-          {grade && (
-            <div style={{ marginTop: '1rem' }}>
-              <label style={labelStyle}>Class</label>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {CLASS_LETTERS.map(l => {
-                  const label = `${grade}${l}`
-                  const added = have.has(label)
-                  return (
-                    <button key={l} type="button" disabled={added || busy} onClick={() => add(l)}
-                      style={{
-                        ...ghostBtn, cursor: added || busy ? 'default' : 'pointer', opacity: added ? 0.45 : 1,
-                      }}>
-                      {label}{added ? ' ✓' : ' +'}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-          {actionError && <p style={{ color: '#ffb3b3', marginTop: '0.75rem', fontSize: '0.9rem' }}>{actionError}</p>}
-        </div>
+      {adding && (
+        <AddClassForm
+          onSave={() => { setAdding(false); reload() }}
+          onCancel={() => setAdding(false)}
+          t={t}
+        />
       )}
 
-      {data && classes.length === 0 && (
-        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
-          You haven't added any classes yet. Choose a grade above, then tap the class you teach, for example 8C.
-        </div>
+      {data?.classes?.length === 0 && !adding && (
+        <p style={muted}>{t('teacher.noClasses')}</p>
       )}
 
-      {classes.map(c => {
-        const isOpen = open === c.id
-        return (
-          <div key={c.id} style={panel}>
-            <div onClick={() => setOpen(isOpen ? null : c.id)}
-              style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', cursor: 'pointer' }}>
-              <div>
-                <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>{c.name}</div>
-                <div style={muted}>Grade {c.grade}</div>
-              </div>
-              <div style={{ ...muted, textAlign: 'right' }}>
-                {c.students.length} student{c.students.length === 1 ? '' : 's'} {isOpen ? '▲' : '▼'}
-              </div>
-            </div>
-
-            {isOpen && (
-              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-                {c.students.length === 0 ? (
-                  <p style={muted}>No students have joined {c.name} yet. Students choose their grade and class on their dashboard.</p>
-                ) : c.students.map(s => (
-                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-                    <span>{s.name}</span>
-                    <span style={{ ...muted, fontSize: '0.8rem', overflowWrap: 'anywhere' }}>{s.username ? `@${s.username}` : ''}</span>
-                  </div>
-                ))}
-                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-                  <button onClick={() => navigate('/teacher/assignments')} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSize: '0.9rem' }}>Assignments</button>
-                  <button onClick={() => navigate('/teacher/progress')} style={ghostBtn}>Progress</button>
-                  <button disabled={busy} onClick={() => remove(c)} style={{ ...ghostBtn, color: '#ffb3b3', borderColor: 'rgba(255,80,80,0.4)' }}>Remove</button>
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {data?.classes?.map((cls) => (
+        <ClassCard key={cls.id} cls={cls} onDelete={deleteClass} t={t} />
+      ))}
     </TeacherPage>
   )
 }
