@@ -1,22 +1,41 @@
 import React, { useEffect, useRef, useState } from 'react'
 import TeacherPage from '../../components/teacher/TeacherPage'
+import Icon from '../../components/shared/Icon'
+import SkeletonList from '../../components/shared/Skeleton'
+import { ErrorBox, ghostBtn, muted, panel } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
 import { apiFetch } from '../../api/apiClient'
-import { gradeColor } from '../../components/student/studentUtils'
-import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
+import { useT } from '../../i18n'
+import { gradeColor, gradeLevelKey, statusLabel } from '../../components/student/studentUtils'
+import { subjectLabel } from '../../config/studentOptions'
+import { glassCard, glassInput } from '../../styles/glass'
 
-const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
-const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
-const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.4rem', fontWeight: '600' }
-const ghostBtn = { ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSize: '0.85rem', background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }
-const stickyCol = { position: 'sticky', left: 0, background: 'var(--color-bg, #001F3F)', zIndex: 1 }
-const th = { padding: '0.55rem 0.7rem', textAlign: 'left', fontSize: '0.78rem', color: 'rgba(255,255,255,0.65)', fontWeight: 600, verticalAlign: 'bottom', minWidth: '88px' }
-const td = { padding: '0.45rem 0.7rem', borderTop: '1px solid rgba(255,255,255,0.1)', whiteSpace: 'nowrap' }
+const labelStyle = { display: 'block', fontSize: 'var(--fs-sm)', marginBottom: '0.4rem', fontWeight: 600 }
+const stickyCol = { position: 'sticky', insetInlineStart: 0, background: 'var(--surface)', zIndex: 1 }
+const th = { padding: '0.55rem 0.7rem', textAlign: 'start', fontSize: 'var(--fs-xs)', color: 'var(--fg-muted)', fontWeight: 600, verticalAlign: 'bottom', minWidth: '5.5rem' }
+const td = { padding: '0.45rem 0.7rem', borderTop: '1px solid var(--border)', whiteSpace: 'nowrap' }
 
-const mean = (list) => (list.length ? Math.round((list.reduce((t, x) => t + x, 0) / list.length) * 10) / 10 : null)
+const mean = (list) => (list.length ? Math.round((list.reduce((s, x) => s + x, 0) / list.length) * 10) / 10 : null)
 const pct = (v) => (v === null || v === undefined ? '–' : `${v}%`)
 
+// True on phone-sized screens, where the grade book is shown as one card per student
+function useNarrow(px = 640) {
+  const query = `(max-width: ${px}px)`
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(query).matches : false)
+  useEffect(() => {
+    if (!window.matchMedia) return
+    const m = window.matchMedia(query)
+    const on = () => setNarrow(m.matches)
+    on()
+    m.addEventListener?.('change', on)
+    return () => m.removeEventListener?.('change', on)
+  }, [query])
+  return narrow
+}
+
 export default function TeacherProgress() {
+  const t = useT()
+  const narrow = useNarrow()
   const classes = useApiData('/api/teacher/classes')
   const [classId, setClassId] = useState('')
   const [subject, setSubject] = useState('')
@@ -46,17 +65,17 @@ export default function TeacherProgress() {
   useEffect(() => {
     const n = Math.round(Number(threshold))
     if (lastSaved.current === null || !Number.isFinite(n) || n < 1 || n > 100 || n === lastSaved.current) return
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         await apiFetch('/api/teacher/gradebook/threshold', { method: 'PUT', body: { threshold: n } })
         lastSaved.current = n
-        setThresholdNote('Saved')
+        setThresholdNote(t('settings.saved'))
       } catch (err) {
-        setThresholdNote(err.message || 'Could not save.')
+        setThresholdNote(err.message || t('common.genericError'))
       }
     }, 700)
-    return () => clearTimeout(t)
-  }, [threshold])
+    return () => clearTimeout(timer)
+  }, [threshold, t])
 
   const changeClass = (id) => { setClassId(id); setSubject(''); setEditing(null); setActionError('') }
 
@@ -66,6 +85,8 @@ export default function TeacherProgress() {
   const students = data ? data.students : []
   const classAvg = data ? (subject ? mean(students.map(avgOf).filter(a => a !== null)) : data.classAverage) : null
   const flagged = students.filter(s => avgOf(s) !== null && avgOf(s) < limit).length
+  const showSubjectCols = !subject && data && data.subjects.length > 1
+  const levelWord = (v) => (gradeLevelKey(v) ? t(gradeLevelKey(v)) : '')
 
   const saveCell = async () => {
     if (!editing) return
@@ -78,7 +99,7 @@ export default function TeacherProgress() {
       setEditing(null)
       book.reload()
     } catch (err) {
-      setActionError(err.message || 'Could not save the grade.')
+      setActionError(err.message || t('teacher.errSaveGrade'))
     }
     setSavingCell(false)
   }
@@ -87,7 +108,7 @@ export default function TeacherProgress() {
     setExporting(true); setActionError('')
     try {
       const r = await apiFetch(`/api/teacher/gradebook/export?classId=${encodeURIComponent(classId)}`)
-      const blob = new Blob(['\uFEFF' + r.csv], { type: 'text/csv;charset=utf-8' })
+      const blob = new Blob(['﻿' + r.csv], { type: 'text/csv;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -97,90 +118,141 @@ export default function TeacherProgress() {
       a.remove()
       URL.revokeObjectURL(url)
     } catch (err) {
-      setActionError(err.message || 'Could not export the grade book.')
+      setActionError(err.message || t('teacher.errExport'))
     }
     setExporting(false)
   }
 
+  // One grade: a button that turns into a small editor. Used by both the table and the phone cards.
+  const Cell = ({ s, a }) => {
+    const cell = s.cells[a.id]
+    const isEditing = editing && editing.studentId === s.id && editing.assignmentId === a.id
+    if (isEditing) {
+      return (
+        <span style={{ display: 'inline-flex', gap: '0.25rem', alignItems: 'center' }}>
+          <input autoFocus type="number" min="0" max="100" step="0.1" inputMode="decimal" aria-label={t('teacher.gradeFor', { name: s.name, title: a.title })}
+            value={editing.value} disabled={savingCell}
+            onChange={e => setEditing({ ...editing, value: e.target.value })}
+            onKeyDown={e => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditing(null) }}
+            style={{ ...glassInput, width: '4.5rem', padding: '0.3rem 0.5rem', fontSize: '16px' }} />
+          <button onClick={saveCell} disabled={savingCell || editing.value === ''} aria-label={t('teacher.saveGrade')}
+            style={{ ...ghostBtn, padding: '0.3rem 0.5rem', minHeight: '2rem' }}><Icon name="check" /></button>
+        </span>
+      )
+    }
+    const hasGrade = cell && cell.grade !== null
+    const text = !cell ? '—' : hasGrade ? `${cell.grade}` : statusLabel(cell.status, t)
+    return (
+      <button onClick={() => { setActionError(''); setEditing({ studentId: s.id, assignmentId: a.id, value: cell?.grade ?? '' }) }}
+        aria-label={t('teacher.editGradeLabel', { name: s.name, title: a.title, value: text })}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', padding: '0.15rem 0.3rem', borderRadius: 'var(--radius-sm)',
+          fontWeight: hasGrade ? 700 : 400, color: hasGrade ? gradeColor(cell.grade) : 'var(--fg-muted)', textDecoration: hasGrade ? 'none' : 'underline dotted' }}>
+        {text}{cell?.isLate ? <span title={t('teacher.late')}> ({t('teacher.late')})</span> : null}
+      </button>
+    )
+  }
+
   return (
-    <TeacherPage title="Grade Book" icon="📊" maxWidth={1200}>
-      {classes.loading && <p style={muted}>Loading...</p>}
-      {classes.error && <div style={{ ...panel, color: '#ffb3b3' }}>{classes.error}</div>}
+    <TeacherPage title={t('shell.f_progress')} icon="eye" maxWidth={1200}>
+      {classes.loading && <SkeletonList />}
+      {classes.error && <ErrorBox message={classes.error} onRetry={classes.reload} />}
 
       {classes.data && classList.length === 0 && (
-        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
-          You haven't added any classes yet. Add one in My Classes to see the grade book here.
-        </div>
+        <div style={{ ...panel, ...muted, textAlign: 'center', padding: 'var(--sp-6) var(--sp-4)' }}>{t('teacher.noClassesProgress')}</div>
       )}
 
       {classList.length > 0 && (
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem', alignItems: 'flex-end' }}>
-          <div style={{ minWidth: '170px', flex: 1 }}>
-            <label style={labelStyle} htmlFor="gb-class">Class</label>
+        <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', marginBottom: 'var(--sp-4)', alignItems: 'flex-end' }}>
+          <div style={{ minWidth: 0, flex: '1 1 10rem' }}>
+            <label style={labelStyle} htmlFor="gb-class">{t('teacher.class')}</label>
             <select id="gb-class" style={glassInput} value={classId} onChange={e => changeClass(e.target.value)}>
-              {classList.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}</option>)}
+              {classList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           {data && data.subjects.length > 1 && (
-            <div style={{ minWidth: '170px', flex: 1 }}>
-              <label style={labelStyle} htmlFor="gb-subject">Subject</label>
+            <div style={{ minWidth: 0, flex: '1 1 10rem' }}>
+              <label style={labelStyle} htmlFor="gb-subject">{t('teacher.subject')}</label>
               <select id="gb-subject" style={glassInput} value={subject} onChange={e => setSubject(e.target.value)}>
-                <option value="" style={{ background: '#001F3F' }}>All subjects</option>
-                {data.subjects.map(sj => <option key={sj} value={sj} style={{ background: '#001F3F' }}>{sj}</option>)}
+                <option value="">{t('student.allSubjects')}</option>
+                {data.subjects.map(sj => <option key={sj} value={sj}>{subjectLabel(sj, t)}</option>)}
               </select>
             </div>
           )}
-          <div style={{ width: '150px' }}>
-            <label style={labelStyle} htmlFor="gb-threshold">Flag below (%)</label>
-            <input id="gb-threshold" style={glassInput} type="number" min="1" max="100" value={threshold}
+          <div style={{ minWidth: 0, flex: '0 1 9.5rem' }}>
+            <label style={labelStyle} htmlFor="gb-threshold">{t('teacher.flagBelow')}</label>
+            <input id="gb-threshold" style={glassInput} type="number" min="1" max="100" inputMode="numeric" value={threshold}
               onChange={e => { setThreshold(e.target.value); setThresholdNote('') }} />
-            {thresholdNote && <div role="status" style={{ ...muted, fontSize: '0.75rem', marginTop: '0.25rem' }}>{thresholdNote}</div>}
+            {thresholdNote && <div role="status" style={{ ...muted, fontSize: 'var(--fs-xs)', marginTop: '0.25rem' }}>{thresholdNote}</div>}
           </div>
-          <button onClick={exportCsv} disabled={exporting || !data} style={{ ...ghostBtn, opacity: exporting ? 0.6 : 1 }}>
-            {exporting ? 'Exporting...' : 'Download CSV'}
+          <button onClick={exportCsv} disabled={exporting || !data} style={{ ...ghostBtn, opacity: exporting ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+            <Icon name="download" />{exporting ? t('teacher.exporting') : t('teacher.downloadCsv')}
           </button>
         </div>
       )}
 
-      {book.loading && classId && !data && <p style={muted}>Loading...</p>}
-      {book.error && <div style={{ ...panel, color: '#ffb3b3' }}>{book.error}</div>}
-      {actionError && <div role="alert" style={{ ...panel, color: '#ffb3b3', padding: '0.7rem 1rem' }}>{actionError}</div>}
+      {book.loading && classId && !data && <SkeletonList />}
+      {book.error && <ErrorBox message={book.error} onRetry={book.reload} />}
+      {actionError && <ErrorBox message={actionError} />}
 
       {data && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-            <div style={{ ...glassCard, padding: '1rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '2rem', fontWeight: 700, color: classAvg === null ? 'white' : gradeColor(classAvg) }}>{pct(classAvg)}</div>
-              <div style={muted}>Class average</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 9rem), 1fr))', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
+            <div style={{ ...glassCard, padding: 'var(--sp-3)', textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--fs-3xl)', fontWeight: 700 }}>{pct(classAvg)}</div>
+              <div style={muted}>{t('teacher.classAverage')}{classAvg !== null ? ` · ${levelWord(classAvg)}` : ''}</div>
             </div>
-            <div style={{ ...glassCard, padding: '1rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '2rem', fontWeight: 700, color: flagged ? '#ff8f8f' : '#7CFC9A' }}>{flagged}</div>
-              <div style={muted}>Below {limit}%</div>
+            <div style={{ ...glassCard, padding: 'var(--sp-3)', textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--fs-3xl)', fontWeight: 700 }}>{flagged}</div>
+              <div style={muted}>{t('teacher.belowN', { n: limit })}</div>
             </div>
-            <div style={{ ...glassCard, padding: '1rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '2rem', fontWeight: 700 }}>{visible.length}</div>
-              <div style={muted}>Assignments</div>
+            <div style={{ ...glassCard, padding: 'var(--sp-3)', textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--fs-3xl)', fontWeight: 700 }}>{visible.length}</div>
+              <div style={muted}>{t('teacher.assignments')}</div>
             </div>
           </div>
 
           {students.length === 0 ? (
-            <div style={{ ...panel, ...muted, textAlign: 'center' }}>No students are in this class yet.</div>
+            <div style={{ ...panel, ...muted, textAlign: 'center' }}>{t('teacher.noStudentsInClass')}</div>
           ) : visible.length === 0 ? (
-            <div style={{ ...panel, ...muted, textAlign: 'center' }}>No assignments yet{subject ? ` for ${subject}` : ''}. Set one in Assignments and the grades will appear here.</div>
+            <div style={{ ...panel, ...muted, textAlign: 'center' }}>{t(subject ? 'teacher.noAssignmentsSubject' : 'teacher.noAssignmentsYet', { subject: subjectLabel(subject, t) })}</div>
+          ) : narrow ? (
+            <div style={{ display: 'grid', gap: 'var(--sp-3)' }}>
+              {students.map(s => {
+                const avg = avgOf(s)
+                const isFlagged = avg !== null && avg < limit
+                return (
+                  <div key={s.id} style={{ ...panel, borderColor: isFlagged ? 'var(--fg)' : undefined, borderWidth: isFlagged ? 2 : undefined }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'baseline' }}>
+                      <strong style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{s.name}</strong>
+                      <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{pct(avg)}</span>
+                    </div>
+                    {avg !== null && <div style={muted}>{levelWord(avg)}{isFlagged ? ` · ${t('teacher.belowN', { n: limit })}` : ''}</div>}
+                    <div style={{ display: 'grid', gap: '0.35rem', marginTop: 'var(--sp-2)' }}>
+                      {visible.map(a => (
+                        <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: '0.35rem' }}>
+                          <span style={{ ...muted, minWidth: 0, overflowWrap: 'anywhere' }}>{a.title}</span>
+                          <Cell s={s} a={a} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           ) : (
-            <div style={{ ...glassCard, padding: 0, overflowX: 'auto' }}>
+            <div style={{ ...glassCard, padding: 0, overflowX: 'auto', maxWidth: '100%' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                 <thead>
                   <tr>
-                    <th style={{ ...th, ...stickyCol, minWidth: '150px' }}>Student</th>
+                    <th style={{ ...th, ...stickyCol, minWidth: '9rem' }}>{t('teacher.student')}</th>
                     {visible.map(a => (
-                      <th key={a.id} style={th} title={`${a.title} (${a.subject})`}>
-                        <div style={{ color: 'white', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</div>
-                        <div style={{ fontWeight: 400, fontSize: '0.72rem' }}>{a.subject}</div>
+                      <th key={a.id} style={th} title={`${a.title} (${subjectLabel(a.subject, t)})`}>
+                        <div style={{ color: 'var(--fg)', maxWidth: '7.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</div>
+                        <div style={{ fontWeight: 400, fontSize: 'var(--fs-xs)' }}>{subjectLabel(a.subject, t)}</div>
                       </th>
                     ))}
-                    <th style={{ ...th, color: C.turquoise }}>{subject ? `${subject} avg` : 'Average'}</th>
-                    {!subject && data.subjects.length > 1 && data.subjects.map(sj => <th key={sj} style={th}>{sj} avg</th>)}
+                    <th style={{ ...th, color: 'var(--fg)' }}>{subject ? t('teacher.subjectAvg', { subject: subjectLabel(subject, t) }) : t('teacher.average')}</th>
+                    {showSubjectCols && data.subjects.map(sj => <th key={sj} style={th}>{t('teacher.subjectAvg', { subject: subjectLabel(sj, t) })}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -188,64 +260,27 @@ export default function TeacherProgress() {
                     const avg = avgOf(s)
                     const isFlagged = avg !== null && avg < limit
                     return (
-                      <tr key={s.id} style={{ background: isFlagged ? 'rgba(255,80,80,0.12)' : undefined }}>
-                        <td style={{ ...td, ...stickyCol, fontWeight: 600 }}>{s.name}{isFlagged && <span title={`Below ${limit}%`} style={{ color: '#ff8f8f' }}> ⚠</span>}</td>
-                        {visible.map(a => {
-                          const cell = s.cells[a.id]
-                          const isEditing = editing && editing.studentId === s.id && editing.assignmentId === a.id
-                          if (isEditing) {
-                            return (
-                              <td key={a.id} style={td}>
-                                <input autoFocus type="number" min="0" max="100" step="0.1" aria-label={`Grade for ${s.name}, ${a.title}`}
-                                  value={editing.value} disabled={savingCell}
-                                  onChange={e => setEditing({ ...editing, value: e.target.value })}
-                                  onKeyDown={e => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditing(null) }}
-                                  style={{ ...glassInput, width: '68px', padding: '0.3rem 0.5rem', fontSize: '0.85rem' }} />
-                                <button onClick={saveCell} disabled={savingCell || editing.value === ''} aria-label="Save grade"
-                                  style={{ ...ghostBtn, padding: '0.25rem 0.5rem', marginLeft: '0.25rem' }}>✓</button>
-                              </td>
-                            )
-                          }
-                          const label = !cell ? '—' : cell.grade !== null ? `${cell.grade}` : cell.status
-                          return (
-                            <td key={a.id} style={td}>
-                              <button onClick={() => { setActionError(''); setEditing({ studentId: s.id, assignmentId: a.id, value: cell?.grade ?? '' }) }}
-                                aria-label={`${s.name}, ${a.title}: ${label}. Edit grade`}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.9rem', padding: '0.15rem 0.3rem', borderRadius: '6px',
-                                  fontWeight: cell?.grade !== null && cell ? 700 : 400,
-                                  color: cell?.grade !== null && cell ? gradeColor(cell.grade) : 'rgba(255,255,255,0.55)' }}>
-                                {label}{cell?.isLate ? <span title="Handed in late" style={{ color: '#ffb36b' }}> •</span> : null}
-                              </button>
-                            </td>
-                          )
-                        })}
-                        <td style={{ ...td, fontWeight: 700, color: avg === null ? 'rgba(255,255,255,0.5)' : gradeColor(avg) }}>{pct(avg)}</td>
-                        {!subject && data.subjects.length > 1 && data.subjects.map(sj => (
-                          <td key={sj} style={{ ...td, color: s.bySubject[sj] === null ? 'rgba(255,255,255,0.5)' : gradeColor(s.bySubject[sj]) }}>{pct(s.bySubject[sj])}</td>
-                        ))}
+                      <tr key={s.id} style={{ background: isFlagged ? 'var(--surface-2)' : undefined }}>
+                        <td style={{ ...td, ...stickyCol, fontWeight: 600 }}>{s.name}{isFlagged && <span style={{ ...muted, fontWeight: 400 }}> · {t('teacher.flagged')}</span>}</td>
+                        {visible.map(a => <td key={a.id} style={td}><Cell s={s} a={a} /></td>)}
+                        <td style={{ ...td, fontWeight: 700 }}>{pct(avg)}</td>
+                        {showSubjectCols && data.subjects.map(sj => <td key={sj} style={{ ...td, color: gradeColor(s.bySubject[sj]) }}>{pct(s.bySubject[sj])}</td>)}
                       </tr>
                     )
                   })}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td style={{ ...td, ...stickyCol, ...muted, fontWeight: 600 }}>Class average</td>
-                    {visible.map(a => (
-                      <td key={a.id} style={{ ...td, color: data.assignmentAverages[a.id] === null ? 'rgba(255,255,255,0.5)' : gradeColor(data.assignmentAverages[a.id]) }}>{pct(data.assignmentAverages[a.id])}</td>
-                    ))}
-                    <td style={{ ...td, fontWeight: 700, color: classAvg === null ? 'rgba(255,255,255,0.5)' : gradeColor(classAvg) }}>{pct(classAvg)}</td>
-                    {!subject && data.subjects.length > 1 && data.subjects.map(sj => {
-                      const v = mean(students.map(s => s.bySubject[sj]).filter(a => a !== null))
-                      return <td key={sj} style={{ ...td, color: v === null ? 'rgba(255,255,255,0.5)' : gradeColor(v) }}>{pct(v)}</td>
-                    })}
+                    <td style={{ ...td, ...stickyCol, ...muted, fontWeight: 600 }}>{t('teacher.classAverage')}</td>
+                    {visible.map(a => <td key={a.id} style={{ ...td, color: gradeColor(data.assignmentAverages[a.id]) }}>{pct(data.assignmentAverages[a.id])}</td>)}
+                    <td style={{ ...td, fontWeight: 700 }}>{pct(classAvg)}</td>
+                    {showSubjectCols && data.subjects.map(sj => <td key={sj} style={td}>{pct(mean(students.map(s => s.bySubject[sj]).filter(a => a !== null)))}</td>)}
                   </tr>
                 </tfoot>
               </table>
             </div>
           )}
-          <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.75rem' }}>
-            Click a cell to enter or change a grade. Every change is kept in the grade history. A dot means the work was handed in late.
-          </p>
+          <p style={{ ...muted, fontSize: 'var(--fs-xs)', marginTop: 'var(--sp-3)' }}>{t('teacher.clickCellHelp')}</p>
         </>
       )}
     </TeacherPage>
