@@ -1,164 +1,224 @@
-import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState } from 'react'
 import StudentPage from '../../components/student/StudentPage'
-import { Chip, ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '../../components/parent/parentUi'
-import { fmtDuration, sessionStatusColor, sessionStatusLabel } from '../../components/tutor/tutorUi'
-import { apiFetch } from '../../api/apiClient'
+import Icon from '../../components/shared/Icon'
+import SkeletonList from '../../components/shared/Skeleton'
+import { ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
+import { apiFetch } from '../../api/apiClient'
+import { useT } from '../../i18n'
+import { useOrgTerms } from '../../hooks/useOrgTerms'
+import { glassBtn, glassCard, glassInput } from '../../styles/glass'
 import { fmtDate } from '../../components/student/studentUtils'
-import { glassInput } from '../../styles/glass'
 
-function AddStudentPanel({ isVerifiedHint, onAdded }) {
-  const [open, setOpen] = useState(false)
+/* ------------------------------------------------------------------ Search/add panel */
+function AddStudentPanel({ onAdded, t }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState(null)
   const [searching, setSearching] = useState(false)
-  const [busyId, setBusyId] = useState(null)
-  const [error, setError] = useState('')
+  const [adding, setAdding] = useState(null)
+  const [err, setErr] = useState(null)
 
-  useEffect(() => {
-    const q = query.trim()
-    if (!open || q.length < 2) { setResults([]); setSearching(false); return }
-    let cancelled = false
-    setSearching(true)
-    const timer = setTimeout(async () => {
-      try {
-        const data = await apiFetch(`/api/tutor/students/search?q=${encodeURIComponent(q)}`)
-        if (!cancelled) { setResults(data.students); setError('') }
-      } catch (err) {
-        if (!cancelled) setError(err.message)
-      } finally {
-        if (!cancelled) setSearching(false)
-      }
-    }, 400)
-    return () => { cancelled = true; clearTimeout(timer) }
-  }, [query, open])
-
-  const add = async (s) => {
-    setBusyId(s.id); setError('')
+  async function search(e) {
+    e.preventDefault()
+    if (!query.trim()) return
+    setSearching(true); setErr(null); setResults(null)
     try {
-      await apiFetch('/api/tutor/students', { method: 'POST', body: { studentId: s.id } })
-      setResults(list => list.map(r => r.id === s.id ? { ...r, added: true } : r))
+      const res = await apiFetch(`/api/tutor/students/search?q=${encodeURIComponent(query)}`)
+      if (!res.ok) throw new Error(await res.text())
+      const json = await res.json()
+      setResults(json.results || [])
+    } catch (ex) {
+      setErr(ex.message || t('common.somethingWentWrong'))
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  async function add(studentId) {
+    setAdding(studentId); setErr(null)
+    try {
+      const res = await apiFetch('/api/tutor/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      setResults(null); setQuery('')
       onAdded()
-    } catch (err) {
-      setError(err.message)
+    } catch (ex) {
+      setErr(ex.message || t('common.somethingWentWrong'))
+    } finally {
+      setAdding(null)
     }
-    setBusyId(null)
   }
 
   return (
-    <div style={{ ...panel, marginBottom: '1.25rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-        <h3 style={{ ...panelTitle, marginBottom: 0 }}>Add a student</h3>
-        <button onClick={() => setOpen(o => !o)} style={ghostBtn}>{open ? 'Close' : 'Find a student'}</button>
+    <div style={{ ...glassCard, padding: 'var(--sp-4)', marginBottom: 'var(--sp-4)' }}>
+      <div style={{ fontWeight: 700, marginBottom: 'var(--sp-3)' }}>{t('tutor.addStudent')}</div>
+      {err && <ErrorBox message={err} />}
+      <form onSubmit={search} style={{ display: 'flex', gap: 'var(--sp-2)', marginBottom: 'var(--sp-3)', flexWrap: 'wrap' }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('tutor.searchStudentPlaceholder')}
+          style={{ ...glassInput, flex: 1, minWidth: '12rem' }}
+          aria-label={t('common.search')}
+        />
+        <button type="submit" disabled={searching} style={glassBtn}>
+          {searching ? t('common.loading') : <Icon name="search" size={14} />}
+        </button>
+      </form>
+      {results !== null && (
+        results.length === 0
+          ? <p style={muted}>{t('tutor.noStudentsFound')}</p>
+          : results.map((s) => (
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', padding: 'var(--sp-2) 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, overflowWrap: 'break-word' }}>{s.name}</div>
+                  <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--fg-muted)' }}>{s.grade} {s.schoolName}</div>
+                </div>
+                <button
+                  style={smallBtn}
+                  onClick={() => add(s.id)}
+                  disabled={adding === s.id}
+                  aria-label={t('tutor.addStudentLabel', { name: s.name })}
+                >
+                  {adding === s.id ? t('common.loading') : t('common.add')}
+                </button>
+              </div>
+            ))
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ History view */
+function StudentHistory({ studentId, studentName, onClose, t }) {
+  const { data, loading, error, reload } = useApiData(`/api/tutor/sessions?studentId=${studentId}`)
+
+  return (
+    <div style={{ ...glassCard, padding: 'var(--sp-4)', marginBottom: 'var(--sp-4)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', marginBottom: 'var(--sp-3)' }}>
+        <span style={{ flex: 1, fontWeight: 700, overflowWrap: 'break-word' }}>{t('tutor.historyFor', { name: studentName })}</span>
+        <button style={ghostBtn} onClick={onClose} aria-label={t('common.close')}><Icon name="close" size={16} /></button>
       </div>
-      {open && (
-        <div style={{ marginTop: '1rem' }}>
-          <input value={query} onChange={e => setQuery(e.target.value)} style={glassInput}
-            placeholder="Type the student's name (at least 2 letters)" aria-label="Search for a student by name" />
-          <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.4rem' }}>Only students in your organisation are shown.</p>
-          {searching && <p style={{ ...muted, marginTop: '0.75rem' }}>Searching...</p>}
-          {!searching && query.trim().length >= 2 && results.length === 0 && !error && (
-            <p style={{ ...muted, marginTop: '0.75rem' }}>No students found with that name.</p>
-          )}
-          <div style={{ display: 'grid', gap: '0.6rem', marginTop: '0.75rem' }}>
-            {results.map(s => (
-              <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <span>{s.name}{s.grade ? <span style={muted}> · Grade {s.grade}</span> : null}</span>
-                {s.added
-                  ? <Chip color="#7CFC9A">On your list</Chip>
-                  : <button disabled={busyId === s.id} onClick={() => add(s)} style={smallBtn}>{busyId === s.id ? 'Adding...' : 'Add'}</button>}
+      {loading && <SkeletonList />}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+      {data && (
+        data.sessions?.length
+          ? data.sessions.map((s) => (
+              <div key={s.id} style={{ padding: 'var(--sp-2) 0', borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-sm)' }}>
+                <div style={{ fontWeight: 500 }}>{fmtDate(s.startsAt)}{s.subject ? ` · ${s.subject}` : ''}</div>
+                {s.notes && <div style={{ color: 'var(--fg-muted)', marginTop: '0.2rem', overflowWrap: 'break-word' }}>{s.notes}</div>}
               </div>
-            ))}
-          </div>
-          {error && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginTop: '0.75rem' }}>{error}</p>}
-        </div>
+            ))
+          : <p style={muted}>{t('tutor.noSessionHistory')}</p>
       )}
     </div>
   )
 }
 
-function History({ studentId }) {
-  const { data, loading, error } = useApiData(`/api/tutor/sessions?studentId=${studentId}`)
-  if (loading) return <p style={{ ...muted, marginTop: '0.75rem' }}>Loading history...</p>
-  if (error) return <p style={{ color: '#ffb3b3', marginTop: '0.75rem' }}>{error}</p>
-  if (!data || data.sessions.length === 0) return <p style={{ ...muted, marginTop: '0.75rem' }}>No sessions yet.</p>
-  return (
-    <div style={{ marginTop: '0.9rem', display: 'grid', gap: '0.7rem' }}>
-      {data.sessions.map(s => (
-        <div key={s.id} style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '0.7rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 600 }}>{fmtDate(s.startsAt)} · {fmtDuration(s.durationMinutes)}{s.subject ? ` · ${s.subject}` : ''}</span>
-            <Chip color={sessionStatusColor(s.status)}>{sessionStatusLabel(s.status)}</Chip>
-          </div>
-          {s.notes && <p style={{ ...muted, marginTop: '0.35rem' }}>{s.notes}</p>}
-        </div>
-      ))}
-    </div>
-  )
-}
-
+/* ------------------------------------------------------------------ main */
 export default function TutorStudents() {
-  const navigate = useNavigate()
+  const t = useT('tutor')
+  const { pick } = useOrgTerms()
   const { data, loading, error, reload } = useApiData('/api/tutor/students')
-  const [openId, setOpenId] = useState(null)
+  const [showAdd, setShowAdd] = useState(false)
+  const [history, setHistory] = useState(null) // { id, name }
   const [confirmRemove, setConfirmRemove] = useState(null)
-  const [actionError, setActionError] = useState('')
+  const [removing, setRemoving] = useState(null)
 
-  const remove = async (id) => {
-    setActionError('')
+  async function remove(studentId) {
+    setRemoving(studentId)
     try {
-      await apiFetch(`/api/tutor/students/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/tutor/students/${studentId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
       setConfirmRemove(null)
-      await reload()
-    } catch (err) {
-      setActionError(err.message)
+      reload()
+    } catch {
+      reload()
+    } finally {
+      setRemoving(null)
     }
   }
 
+  const students = data?.students || []
+
   return (
-    <StudentPage title="My Students" icon="👨‍🎓" backPath="/tutor/dashboard">
-      <AddStudentPanel onAdded={reload} />
-
-      {loading && !data && <p style={muted}>Loading...</p>}
+    <StudentPage title={pick(t('tutor.myStudentsFirm'), t('tutor.myStudents'))} backPath="/tutor/dashboard">
+      {loading && <SkeletonList />}
       {error && <ErrorBox message={error} onRetry={reload} />}
-      {actionError && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginBottom: '1rem' }}>{actionError}</p>}
 
-      {data && data.students.length === 0 && (
-        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
-          You haven't added any students yet. Use "Find a student" above.
-        </div>
+      {data?.isVerified && !showAdd && (
+        <button
+          style={{ ...glassBtn, marginBottom: 'var(--sp-4)', display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-1)' }}
+          onClick={() => setShowAdd(true)}
+        >
+          <Icon name="plus" size={14} /> {t('tutor.addStudent')}
+        </button>
       )}
 
-      {data && data.students.map(st => (
-        <div key={st.id} style={{ ...panel, marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontWeight: 700 }}>{st.name}</div>
-              <div style={{ ...muted, fontSize: '0.85rem' }}>
-                {st.grade ? `Grade ${st.grade} · ` : ''}{st.sessionCount} session{st.sessionCount === 1 ? '' : 's'}
-                {st.nextSession ? ` · next ${fmtDate(st.nextSession)}` : ''}
+      {showAdd && (
+        <AddStudentPanel
+          onAdded={() => { setShowAdd(false); reload() }}
+          t={t}
+        />
+      )}
+
+      {history && (
+        <StudentHistory
+          studentId={history.id}
+          studentName={history.name}
+          onClose={() => setHistory(null)}
+          t={t}
+        />
+      )}
+
+      {students.length === 0 && !showAdd && (
+        <p style={muted}>{pick(t('tutor.noStudentsFirm'), t('tutor.noStudents'))}</p>
+      )}
+
+      {students.map((s) => (
+        <div key={s.id} style={{ ...panel, marginBottom: 'var(--sp-3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', flexWrap: 'wrap', minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, overflowWrap: 'break-word' }}>{s.name}</div>
+              <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-muted)', marginTop: '0.1rem' }}>
+                {s.grade}{s.schoolName ? ` · ${s.schoolName}` : ''}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <button onClick={() => navigate(`/tutor/sessions?student=${st.id}`)} style={smallBtn}>Schedule session</button>
-              <button onClick={() => setOpenId(openId === st.id ? null : st.id)} style={ghostBtn}>{openId === st.id ? 'Hide history' : 'History'}</button>
-            </div>
-          </div>
-
-          {openId === st.id && <History studentId={st.id} />}
-
-          <div style={{ marginTop: '0.9rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            {confirmRemove === st.id ? (
+            <button
+              style={ghostBtn}
+              onClick={() => setHistory(history?.id === s.id ? null : { id: s.id, name: s.name })}
+              aria-label={t('tutor.viewHistory')}
+            >
+              <Icon name="eye" size={14} />
+            </button>
+            {confirmRemove === s.id ? (
               <>
-                <span style={{ fontSize: '0.85rem', color: '#ffaaaa' }}>Remove from your list? Past sessions are kept.</span>
-                <button onClick={() => remove(st.id)} style={{ ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }}>Yes, remove</button>
-                <button onClick={() => setConfirmRemove(null)} style={ghostBtn}>Cancel</button>
+                <button
+                  style={smallBtn}
+                  onClick={() => remove(s.id)}
+                  disabled={removing === s.id}
+                  aria-label={t('common.confirm')}
+                >
+                  <Icon name="check" size={14} />
+                </button>
+                <button style={ghostBtn} onClick={() => setConfirmRemove(null)} aria-label={t('common.cancel')}>
+                  <Icon name="close" size={14} />
+                </button>
               </>
             ) : (
-              <button onClick={() => setConfirmRemove(st.id)} style={{ ...ghostBtn, color: '#ff8a8a', border: '1px solid rgba(255,80,80,0.5)' }}>Remove</button>
+              <button style={ghostBtn} onClick={() => setConfirmRemove(s.id)} aria-label={t('tutor.removeStudent')}>
+                <Icon name="trash" size={14} />
+              </button>
             )}
           </div>
+          {s.sessionCount != null && (
+            <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--fg-muted)', marginTop: 'var(--sp-1)' }}>
+              {t('tutor.sessionCount', { n: s.sessionCount })}
+            </div>
+          )}
         </div>
       ))}
     </StudentPage>
