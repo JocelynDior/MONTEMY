@@ -1,15 +1,15 @@
 import React, { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import StudentPage from '../../components/student/StudentPage'
-import { Chip, ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn } from '../../components/parent/parentUi'
+import { Chip, ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../components/parent/parentUi'
 import { SegmentedTabs, fmtDuration, sessionStatusColor, sessionStatusLabel } from '../../components/tutor/tutorUi'
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
+import { useT } from '../../i18n'
 import { fmtDate } from '../../components/student/studentUtils'
-import { glassInput } from '../../styles/glass'
+import { glassBtn, glassInput } from '../../styles/glass'
 
 const DURATIONS = [30, 45, 60, 90, 120]
-const label = { display: 'block', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', marginBottom: '0.3rem' }
 const pad = (n) => String(n).padStart(2, '0')
 
 function toLocalInput(iso) {
@@ -18,66 +18,80 @@ function toLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function SessionForm({ initial, students, isEdit, saving, error, onSave, onCancel }) {
+function SessionForm({ initial, students, isEdit, saving, error, onSave, onCancel, t }) {
   const [form, setForm] = useState(initial)
-  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
-  const durations = DURATIONS.includes(Number(form.durationMinutes)) ? DURATIONS : [...DURATIONS, Number(form.durationMinutes)].sort((a, b) => a - b)
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const durations = DURATIONS.includes(Number(form.durationMinutes))
+    ? DURATIONS
+    : [...DURATIONS, Number(form.durationMinutes)].sort((a, b) => a - b)
+
+  const lbl = { display: 'block', fontSize: 'var(--fs-sm)', fontWeight: 600, marginBottom: '0.3rem', color: 'var(--fg-muted)' }
+  const inp = { ...glassInput, width: '100%', boxSizing: 'border-box' }
 
   return (
-    <div style={{ ...panel, marginBottom: '1.25rem' }}>
-      <h3 style={panelTitle}>{isEdit ? 'Edit session' : 'New session'}</h3>
-      <div style={{ display: 'grid', gap: '0.9rem' }}>
-        <div>
-          <label style={label} htmlFor="s-student">Student</label>
-          <select id="s-student" value={form.studentId} onChange={set('studentId')} disabled={isEdit} style={glassInput}>
-            <option value="" style={{ color: '#000' }}>Choose a student...</option>
-            {students.map(s => <option key={s.id} value={s.id} style={{ color: '#000' }}>{s.name}</option>)}
+    <div style={{ ...panel, marginBottom: 'var(--sp-4)' }}>
+      <div style={{ fontWeight: 700, fontSize: 'var(--fs-lg)', marginBottom: 'var(--sp-3)' }}>
+        {isEdit ? t('tutor.editSession') : t('tutor.newSession')}
+      </div>
+      <div style={{ display: 'grid', gap: 'var(--sp-3)' }}>
+        <label style={lbl}>{t('tutor.student')}
+          <select value={form.studentId} onChange={set('studentId')} disabled={isEdit} style={inp}>
+            <option value="">{t('tutor.chooseStudent')}</option>
+            {students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.9rem' }}>
-          <div>
-            <label style={label} htmlFor="s-date">Date and time</label>
-            <input id="s-date" type="datetime-local" value={form.startsAt} onChange={set('startsAt')} style={glassInput} />
-          </div>
-          <div>
-            <label style={label} htmlFor="s-dur">Duration</label>
-            <select id="s-dur" value={form.durationMinutes} onChange={set('durationMinutes')} style={glassInput}>
-              {durations.map(d => <option key={d} value={d} style={{ color: '#000' }}>{fmtDuration(d)}</option>)}
+        </label>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(10rem, 1fr))', gap: 'var(--sp-3)' }}>
+          <label style={lbl}>{t('tutor.dateAndTime')}
+            <input type="datetime-local" value={form.startsAt} onChange={set('startsAt')} style={inp} />
+          </label>
+          <label style={lbl}>{t('tutor.duration')}
+            <select value={form.durationMinutes} onChange={set('durationMinutes')} style={inp}>
+              {durations.map((d) => <option key={d} value={d}>{fmtDuration(d)}</option>)}
             </select>
-          </div>
+          </label>
         </div>
-        <div>
-          <label style={label} htmlFor="s-subject">Subject (optional)</label>
-          <input id="s-subject" value={form.subject} onChange={set('subject')} maxLength={100} style={glassInput} placeholder="e.g. Algebra" />
-        </div>
-        <div>
-          <label style={label} htmlFor="s-notes">Notes (optional)</label>
-          <textarea id="s-notes" value={form.notes} onChange={set('notes')} maxLength={2000} rows={4}
-            style={{ ...glassInput, resize: 'vertical', fontFamily: 'inherit' }} placeholder="What you covered, how it went, what to practise..." />
-        </div>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', cursor: 'pointer', fontSize: '0.9rem' }}>
-          <input type="checkbox" checked={form.shareNotesWithParents}
-            onChange={e => setForm(f => ({ ...f, shareNotesWithParents: e.target.checked }))} />
-          Let the student's linked parents read these notes
+        <label style={lbl}>{t('tutor.subject')}
+          <input value={form.subject} onChange={set('subject')} maxLength={100} style={inp} placeholder={t('tutor.subjectPlaceholder')} />
+        </label>
+        <label style={lbl}>{t('tutor.notes')}
+          <textarea
+            value={form.notes}
+            onChange={set('notes')}
+            maxLength={2000}
+            rows={4}
+            style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}
+            placeholder={t('tutor.notesPlaceholder')}
+          />
+        </label>
+        <label style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', cursor: 'pointer', fontSize: 'var(--fs-sm)' }}>
+          <input
+            type="checkbox"
+            checked={form.shareNotesWithParents}
+            onChange={(e) => setForm((f) => ({ ...f, shareNotesWithParents: e.target.checked }))}
+          />
+          {t('tutor.shareNotesWithParents')}
         </label>
       </div>
 
-      {error && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginTop: '0.75rem' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--fg)', background: 'var(--surface-2)', borderRadius: 'var(--radius-sm)', padding: 'var(--sp-2)', fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-3)' }}>{error}</p>}
 
-      <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem' }}>
-        <button disabled={saving} onClick={() => onSave(form)} style={smallBtn}>{saving ? 'Saving...' : isEdit ? 'Save changes' : 'Book session'}</button>
-        <button disabled={saving} onClick={onCancel} style={ghostBtn}>Cancel</button>
+      <div style={{ display: 'flex', gap: 'var(--sp-2)', marginTop: 'var(--sp-4)', flexWrap: 'wrap' }}>
+        <button disabled={saving} onClick={() => onSave(form)} style={glassBtn}>
+          {saving ? t('settings.saving') : isEdit ? t('common.save') : t('tutor.bookSession')}
+        </button>
+        <button disabled={saving} onClick={onCancel} style={ghostBtn}>{t('common.cancel')}</button>
       </div>
     </div>
   )
 }
 
 export default function TutorSessions() {
+  const t = useT('tutor')
   const [params, setParams] = useSearchParams()
   const sessionsReq = useApiData('/api/tutor/sessions')
   const studentsReq = useApiData('/api/tutor/students')
   const [view, setView] = useState('upcoming')
-  const [formMode, setFormMode] = useState(params.get('student') ? 'new' : null)  // null | 'new' | session id
+  const [formMode, setFormMode] = useState(params.get('student') ? 'new' : null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -87,19 +101,23 @@ export default function TutorSessions() {
   const students = studentsReq.data?.students || []
   const all = sessionsReq.data?.sessions || []
   const now = Date.now()
-  const upcoming = all.filter(s => s.status === 'scheduled' && new Date(s.startsAt).getTime() >= now)
+  const upcoming = all
+    .filter((s) => s.status === 'scheduled' && new Date(s.startsAt).getTime() >= now)
     .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt))
-  // Past = anything finished, cancelled, or scheduled for a time that has gone by (newest first)
-  const past = all.filter(s => !(s.status === 'scheduled' && new Date(s.startsAt).getTime() >= now))
+  const past = all.filter((s) => !(s.status === 'scheduled' && new Date(s.startsAt).getTime() >= now))
   const list = view === 'upcoming' ? upcoming : past
 
-  const closeForm = () => { setFormMode(null); setFormError(''); if (params.get('student')) setParams({}, { replace: true }) }
+  const closeForm = () => {
+    setFormMode(null)
+    setFormError('')
+    if (params.get('student')) setParams({}, { replace: true })
+  }
 
   const save = async (form) => {
     setSaving(true); setFormError('')
     try {
-      if (formMode === 'new' && !form.studentId) throw new Error('Please choose a student.')
-      if (!form.startsAt) throw new Error('Please choose a date and time.')
+      if (formMode === 'new' && !form.studentId) throw new Error(t('tutor.errChooseStudent'))
+      if (!form.startsAt) throw new Error(t('tutor.errChooseDate'))
       const body = {
         startsAt: new Date(form.startsAt).toISOString(),
         durationMinutes: Number(form.durationMinutes),
@@ -107,8 +125,11 @@ export default function TutorSessions() {
         notes: form.notes,
         shareNotesWithParents: form.shareNotesWithParents,
       }
-      if (formMode === 'new') await apiFetch('/api/tutor/sessions', { method: 'POST', body: { ...body, studentId: form.studentId } })
-      else await apiFetch(`/api/tutor/sessions/${formMode}`, { method: 'PUT', body })
+      if (formMode === 'new') {
+        await apiFetch('/api/tutor/sessions', { method: 'POST', body: { ...body, studentId: form.studentId } })
+      } else {
+        await apiFetch(`/api/tutor/sessions/${formMode}`, { method: 'PUT', body })
+      }
       closeForm()
       await Promise.all([sessionsReq.reload(), studentsReq.reload()])
     } catch (err) {
@@ -139,14 +160,19 @@ export default function TutorSessions() {
     }
   }
 
-  const editing = formMode && formMode !== 'new' ? all.find(s => s.id === formMode) : null
-  const loading = (sessionsReq.loading && !sessionsReq.data) || (studentsReq.loading && !studentsReq.data)
-  const error = sessionsReq.error || studentsReq.error
+  const editing = formMode && formMode !== 'new' ? all.find((s) => s.id === formMode) : null
+  const isLoading = (sessionsReq.loading && !sessionsReq.data) || (studentsReq.loading && !studentsReq.data)
+  const loadError = sessionsReq.error || studentsReq.error
+
+  const tabs = [
+    { key: 'upcoming', label: `${t('tutor.tabUpcoming')} (${upcoming.length})` },
+    { key: 'past', label: `${t('tutor.tabPast')} (${past.length})` },
+  ]
 
   return (
-    <StudentPage title="Sessions" icon="📅" backPath="/tutor/dashboard">
-      {loading && <p style={muted}>Loading...</p>}
-      {error && <ErrorBox message={error} onRetry={() => { sessionsReq.reload(); studentsReq.reload() }} />}
+    <StudentPage title={t('tutor.pageSessions')} backPath="/tutor/dashboard">
+      {isLoading && <p style={muted}>{t('common.loading')}</p>}
+      {loadError && <ErrorBox message={loadError} onRetry={() => { sessionsReq.reload(); studentsReq.reload() }} />}
 
       {sessionsReq.data && studentsReq.data && (
         <>
@@ -154,59 +180,88 @@ export default function TutorSessions() {
             <SessionForm
               key={formMode}
               isEdit={formMode !== 'new'}
-              initial={editing
-                ? { studentId: editing.studentId, startsAt: toLocalInput(editing.startsAt), durationMinutes: editing.durationMinutes, subject: editing.subject || '', notes: editing.notes || '', shareNotesWithParents: editing.shareNotesWithParents }
-                : { studentId: params.get('student') || '', startsAt: '', durationMinutes: 60, subject: '', notes: '', shareNotesWithParents: false }}
-              students={students} saving={saving} error={formError}
-              onSave={save} onCancel={closeForm}
+              initial={
+                editing
+                  ? { studentId: editing.studentId, startsAt: toLocalInput(editing.startsAt), durationMinutes: editing.durationMinutes, subject: editing.subject || '', notes: editing.notes || '', shareNotesWithParents: editing.shareNotesWithParents }
+                  : { studentId: params.get('student') || '', startsAt: '', durationMinutes: 60, subject: '', notes: '', shareNotesWithParents: false }
+              }
+              students={students}
+              saving={saving}
+              error={formError}
+              onSave={save}
+              onCancel={closeForm}
+              t={t}
             />
           ) : (
-            <div style={{ marginBottom: '1.25rem' }}>
-              <button onClick={() => { setFormMode('new'); setFormError('') }} style={smallBtn} disabled={students.length === 0}>+ New session</button>
-              {students.length === 0 && <span style={{ ...muted, marginLeft: '0.75rem' }}>Add a student first (My Students).</span>}
+            <div style={{ marginBottom: 'var(--sp-4)' }}>
+              <button
+                onClick={() => { setFormMode('new'); setFormError('') }}
+                style={{ ...glassBtn, display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-1)' }}
+                disabled={students.length === 0}
+              >
+                {t('tutor.newSession')}
+              </button>
+              {students.length === 0 && (
+                <span style={{ ...muted, marginInlineStart: 'var(--sp-3)', fontSize: 'var(--fs-sm)' }}>{t('tutor.addStudentFirst')}</span>
+              )}
             </div>
           )}
 
-          <SegmentedTabs value={view} onChange={setView} tabs={[
-            { key: 'upcoming', label: `Upcoming (${upcoming.length})` },
-            { key: 'past', label: `Past (${past.length})` },
-          ]} />
+          <SegmentedTabs value={view} onChange={setView} tabs={tabs} />
 
-          {actionError && <p style={{ color: '#ffb3b3', fontSize: '0.9rem', marginBottom: '1rem' }}>{actionError}</p>}
+          {actionError && (
+            <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg)', background: 'var(--surface-2)', padding: 'var(--sp-2)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--sp-3)' }}>
+              {actionError}
+            </p>
+          )}
 
           {list.length === 0 ? (
-            <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
-              {view === 'upcoming' ? 'No upcoming sessions.' : 'No past sessions.'}
+            <div style={{ ...panel, ...muted, textAlign: 'center', padding: 'var(--sp-6)' }}>
+              {view === 'upcoming' ? t('tutor.noUpcomingSessions') : t('tutor.noPastSessions')}
             </div>
-          ) : list.map(s => (
-            <div key={s.id} style={{ ...panel, marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                <span style={{ fontWeight: 700 }}>{s.studentName}{s.subject ? ` · ${s.subject}` : ''}</span>
-                <Chip color={sessionStatusColor(s.status)}>{sessionStatusLabel(s.status)}</Chip>
-              </div>
-              <div style={{ ...muted, fontSize: '0.85rem', marginTop: '0.3rem' }}>{fmtDate(s.startsAt)} · {fmtDuration(s.durationMinutes)}</div>
-              {s.notes && <p style={{ ...muted, marginTop: '0.5rem' }}>{s.notes}</p>}
-              {s.notes && <p style={{ ...muted, fontSize: '0.75rem', marginTop: '0.2rem' }}>{s.shareNotesWithParents ? 'Shared with parents' : 'Private to you'}</p>}
-
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.9rem', flexWrap: 'wrap' }}>
-                {confirmDelete === s.id ? (
-                  <>
-                    <span style={{ fontSize: '0.85rem', color: '#ffaaaa' }}>Delete this session for good?</span>
-                    <button onClick={() => remove(s.id)} style={{ ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }}>Yes, delete</button>
-                    <button onClick={() => setConfirmDelete(null)} style={ghostBtn}>Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    {s.status === 'scheduled' && <button disabled={busyId === s.id} onClick={() => setStatus(s.id, 'completed')} style={smallBtn}>Mark completed</button>}
-                    {s.status === 'scheduled' && <button disabled={busyId === s.id} onClick={() => setStatus(s.id, 'cancelled')} style={ghostBtn}>Cancel session</button>}
-                    {s.status !== 'scheduled' && <button disabled={busyId === s.id} onClick={() => setStatus(s.id, 'scheduled')} style={ghostBtn}>Reopen</button>}
-                    <button onClick={() => { setFormMode(s.id); setFormError(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }} style={ghostBtn}>Edit</button>
-                    <button onClick={() => setConfirmDelete(s.id)} style={{ ...ghostBtn, color: '#ff8a8a', border: '1px solid rgba(255,80,80,0.5)' }}>Delete</button>
-                  </>
+          ) : (
+            list.map((s) => (
+              <div key={s.id} style={{ ...panel, marginBottom: 'var(--sp-3)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-2)', flexWrap: 'wrap', minWidth: 0 }}>
+                  <span style={{ fontWeight: 700, overflowWrap: 'break-word' }}>{s.studentName}{s.subject ? ` · ${s.subject}` : ''}</span>
+                  <Chip label={sessionStatusLabel(s.status, t)} color={sessionStatusColor(s.status)} />
+                </div>
+                <div style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-1)' }}>
+                  {fmtDate(s.startsAt)} · {fmtDuration(s.durationMinutes)}
+                </div>
+                {s.notes && <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-2)', overflowWrap: 'break-word' }}>{s.notes}</p>}
+                {s.notes && (
+                  <p style={{ color: 'var(--fg-subtle)', fontSize: 'var(--fs-xs)', marginTop: '0.2rem' }}>
+                    {s.shareNotesWithParents ? t('tutor.sharedWithParents') : t('tutor.privateToYou')}
+                  </p>
                 )}
+
+                <div style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', marginTop: 'var(--sp-3)', flexWrap: 'wrap' }}>
+                  {confirmDelete === s.id ? (
+                    <>
+                      <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-muted)' }}>{t('tutor.confirmDeleteSession')}</span>
+                      <button onClick={() => remove(s.id)} style={smallBtn}>{t('common.yes')}</button>
+                      <button onClick={() => setConfirmDelete(null)} style={ghostBtn}>{t('common.cancel')}</button>
+                    </>
+                  ) : (
+                    <>
+                      {s.status === 'scheduled' && (
+                        <button disabled={busyId === s.id} onClick={() => setStatus(s.id, 'completed')} style={smallBtn}>{t('tutor.markCompleted')}</button>
+                      )}
+                      {s.status === 'scheduled' && (
+                        <button disabled={busyId === s.id} onClick={() => setStatus(s.id, 'cancelled')} style={ghostBtn}>{t('tutor.cancelSession')}</button>
+                      )}
+                      {s.status !== 'scheduled' && (
+                        <button disabled={busyId === s.id} onClick={() => setStatus(s.id, 'scheduled')} style={ghostBtn}>{t('tutor.reopen')}</button>
+                      )}
+                      <button onClick={() => { setFormMode(s.id); setFormError(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }} style={ghostBtn}>{t('common.edit')}</button>
+                      <button onClick={() => setConfirmDelete(s.id)} style={ghostBtn}>{t('common.delete')}</button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </>
       )}
     </StudentPage>
