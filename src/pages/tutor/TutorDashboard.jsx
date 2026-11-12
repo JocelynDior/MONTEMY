@@ -1,78 +1,74 @@
 import React from 'react'
-import { useNavigate } from 'react-router-dom'
-import DashboardShell from '../../components/layout/DashboardShell'
-import { Chip, ErrorBox, muted, panel, panelTitle } from '../../components/parent/parentUi'
-import { fmtDuration } from '../../components/tutor/tutorUi'
+import DashboardShell from '../../components/shell/DashboardShell'
 import { useApiData } from '../../hooks/useApiData'
+import { useT } from '../../i18n'
+import { muted, panel, Chip } from '../../components/parent/parentUi'
+import { ErrorBox } from '../../components/parent/parentUi'
+import SkeletonList from '../../components/shared/Skeleton'
+import { useOrgTerms } from '../../hooks/useOrgTerms'
 import { fmtDate } from '../../components/student/studentUtils'
-import { glassBtn } from '../../styles/glass'
-
-const cards = [
-  { icon: '👨‍🎓', title: 'My Students', description: 'View and manage your assigned students', path: '/tutor/students', requiresVerification: true },
-  { icon: '📅', title: 'Sessions', description: 'Schedule and manage tutoring sessions', path: '/tutor/sessions', requiresVerification: true },
-  { icon: '📝', title: 'Learning Plans', description: 'Create personalised learning plans for students', path: '/tutor/plans', requiresVerification: true },
-  { icon: '📊', title: 'Progress Reports', description: 'Track and report on student progress', path: '/tutor/progress', requiresVerification: true },
-  { icon: '💬', title: 'Messages', description: 'Communicate with students and parents', path: '/messages', requiresVerification: true },
-  { icon: '📖', title: 'Resources', description: 'Access and share learning materials', path: '/tutor/resources', requiresVerification: false },
-  { icon: '🎉', title: 'Events', description: 'Events and RSVP', path: '/events', requiresVerification: false },
-  { icon: '⚙️', title: 'Contact Admin', description: 'Get help from Montemy support', path: '/tutor/contact-admin', requiresVerification: false },
-]
-
-function Stat({ label, value }) {
-  return (
-    <div style={{ ...panel, textAlign: 'center' }}>
-      <div style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--color-primary)' }}>{value}</div>
-      <div style={muted}>{label}</div>
-    </div>
-  )
-}
+import { sessionStatusColor, sessionStatusLabel, fmtDuration } from '../../components/tutor/tutorUi'
 
 function TutorSummary() {
-  const navigate = useNavigate()
+  const t = useT('tutor')
   const { data, loading, error, reload } = useApiData('/api/tutor/overview')
+  const { pick } = useOrgTerms()
 
-  if (loading) return <p style={{ ...muted, marginTop: '1rem' }}>Loading your overview...</p>
-  if (error) return <div style={{ marginTop: '1rem' }}><ErrorBox message={error} onRetry={reload} /></div>
+  if (loading) return <SkeletonList />
+  if (error) return <ErrorBox message={error} onRetry={reload} />
+  if (!data) return null
 
-  const { org, isVerified, studentCount, upcomingCount, completedCount, upcoming } = data
+  const { isVerified, studentCount, upcomingCount, completedCount, upcoming } = data
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem', marginTop: '1.25rem' }}>
-      <div style={{ ...panel, display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: '1.15rem', fontWeight: 700 }}>{org?.name || 'No organisation linked'}</div>
-        <Chip color={isVerified ? '#7CFC9A' : '#ffe08a'}>{isVerified ? 'Verified' : 'Awaiting verification'}</Chip>
-      </div>
+    <div style={{ padding: 'var(--sp-4) var(--page-gutter) 0' }}>
+      {!isVerified && (
+        <div style={{ ...panel, marginBottom: 'var(--sp-4)', background: 'var(--surface-2)', borderColor: 'var(--border-strong)' }}>
+          <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-muted)' }}>{t('tutor.pendingVerification')}</p>
+        </div>
+      )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1.25rem' }}>
-        <Stat label="Students" value={studentCount} />
-        <Stat label="Upcoming sessions" value={upcomingCount} />
-        <Stat label="Sessions completed" value={completedCount} />
-      </div>
-
-      <div style={panel}>
-        <h3 style={panelTitle}>Next sessions</h3>
-        {upcoming.length === 0 ? (
-          <p style={muted}>{studentCount === 0 ? 'Add your first student to start booking sessions.' : 'No upcoming sessions.'}</p>
-        ) : upcoming.map(s => (
-          <div key={s.id} style={{ marginBottom: '0.7rem' }}>
-            <div style={{ fontWeight: 600 }}>{s.studentName}{s.subject ? ` · ${s.subject}` : ''}</div>
-            <div style={{ ...muted, fontSize: '0.8rem' }}>{fmtDate(s.startsAt)} · {fmtDuration(s.durationMinutes)}</div>
+      {/* Stats row */}
+      <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', marginBottom: 'var(--sp-4)' }}>
+        {[
+          { label: pick(t('tutor.statStudentsFirm'), t('tutor.statStudents')), value: studentCount ?? 0 },
+          { label: t('tutor.statUpcoming'), value: upcomingCount ?? 0 },
+          { label: t('tutor.statCompleted'), value: completedCount ?? 0 },
+        ].map((s) => (
+          <div key={s.label} style={{ ...panel, flex: '1 1 100px', textAlign: 'center', padding: 'var(--sp-3)' }}>
+            <div style={{ fontSize: 'var(--fs-2xl)', fontWeight: 700 }}>{s.value}</div>
+            <div style={{ ...muted, fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-1)' }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-        <button onClick={() => navigate('/tutor/sessions')} style={{ ...glassBtn, width: 'auto', padding: '0.6rem 1.4rem' }}>Manage sessions</button>
-        <button onClick={() => navigate('/tutor/students')} style={{ ...glassBtn, width: 'auto', padding: '0.6rem 1.4rem' }}>My students</button>
-      </div>
+      {/* Upcoming sessions */}
+      {upcoming?.length > 0 && (
+        <div style={{ ...panel, marginBottom: 'var(--sp-4)' }}>
+          <div style={{ fontWeight: 700, marginBottom: 'var(--sp-2)' }}>{t('tutor.upcomingSessions')}</div>
+          {upcoming.map((s) => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', padding: 'var(--sp-2) 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontWeight: 500, overflowWrap: 'break-word' }}>{s.studentName}</span>
+                {s.subject && <span style={{ ...muted, fontSize: 'var(--fs-sm)', marginInlineStart: 'var(--sp-1)' }}>{s.subject}</span>}
+                <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--fg-muted)', marginTop: '0.1rem' }}>
+                  {fmtDate(s.startsAt)} · {fmtDuration(s.durationMinutes)}
+                </div>
+              </div>
+              <Chip label={sessionStatusLabel(s.status, t)} color={sessionStatusColor(s.status)} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 export default function TutorDashboard() {
   return (
-    <DashboardShell role="tutor" collection="tutors" cards={cards}>
+    <>
+      <DashboardShell role="tutor" collection="tutors" />
       <TutorSummary />
-    </DashboardShell>
+    </>
   )
 }
