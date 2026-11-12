@@ -1,38 +1,46 @@
-import React from 'react'
+import React, { useState } from 'react'
 import TeacherPage from '../../components/teacher/TeacherPage'
+import Icon from '../../components/shared/Icon'
+import SkeletonList from '../../components/shared/Skeleton'
+import { ErrorBox, ghostBtn, muted, panel } from '../../components/parent/parentUi'
+import { useApiData } from '../../hooks/useApiData'
+import { useT } from '../../i18n'
+import { glassBtn } from '../../styles/glass'
 import ResourceUploadForm from '../../components/resources/ResourceUploadForm'
 import ResourceGrid from '../../components/resources/ResourceGrid'
-import { useApiData } from '../../hooks/useApiData'
-import { apiFetch } from '../../api/apiClient'
-import { glassCard, glassBtn, C } from '../../styles/glass'
-
-const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
 
 export default function TeacherResources() {
+  const t = useT('teacher')
   const { data, loading, error, reload } = useApiData('/api/resources?mine=1')
-  const resources = data?.resources || []
-
-  const remove = async (id) => {
-    await apiFetch(`/api/resources/${id}`, { method: 'DELETE' })
-    await reload()
-  }
+  const [uploading, setUploading] = useState(false)
 
   return (
-    <TeacherPage title="Study Resources" icon="📚">
-      <ResourceUploadForm onUploaded={reload} />
+    <TeacherPage title={t('shell.f_textbooks')}>
+      {loading && <SkeletonList />}
+      {error && <ErrorBox message={error} onRetry={reload} />}
 
-      <h3 style={{ color: C.turquoise, fontSize: '1.05rem', marginBottom: '0.75rem' }}>Your uploads</h3>
-      {loading ? <p style={muted}>Loading...</p> : error ? (
-        <div style={{ ...glassCard, padding: '1rem 1.25rem', borderColor: 'rgba(255,80,80,0.4)' }}>
-          <p style={{ color: '#ffb3b3', marginBottom: '0.75rem' }}>{error}</p>
-          <button onClick={reload} style={{ ...glassBtn, width: 'auto', padding: '0.5rem 1.2rem' }}>Try again</button>
-        </div>
-      ) : resources.length === 0 ? (
-        <div style={{ ...glassCard, padding: '2rem', textAlign: 'center', ...muted }}>
-          You haven't uploaded anything yet. Use the form above to share notes, worksheets or past papers with your school.
-        </div>
-      ) : (
-        <ResourceGrid resources={resources} onDelete={remove} showUploader={false} />
+      {data?.canWrite && !uploading && (
+        <button
+          style={{ ...glassBtn, marginBottom: 'var(--sp-4)', display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-1)' }}
+          onClick={() => setUploading(true)}
+        >
+          <Icon name="upload" size={14} /> {t('teacher.uploadTextbook')}
+        </button>
+      )}
+
+      {uploading && (
+        <ResourceUploadForm
+          onSave={() => { setUploading(false); reload() }}
+          onCancel={() => setUploading(false)}
+        />
+      )}
+
+      {data?.resources?.length === 0 && !uploading && (
+        <p style={muted}>{t('teacher.noTextbooks')}</p>
+      )}
+
+      {data?.resources?.length > 0 && (
+        <ResourceGrid resources={data.resources} onDelete={reload} />
       )}
     </TeacherPage>
   )
