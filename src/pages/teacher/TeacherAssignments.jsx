@@ -1,417 +1,403 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import TeacherPage from '../../components/teacher/TeacherPage'
+import Icon from '../../components/shared/Icon'
+import SkeletonList from '../../components/shared/Skeleton'
+import { ErrorBox, ghostBtn, muted, panel, panelTitle, smallBtn, Chip } from '../../components/parent/parentUi'
+import { SegmentedTabs } from '../../components/tutor/tutorUi'
 import { useApiData } from '../../hooks/useApiData'
 import { apiFetch } from '../../api/apiClient'
-import { dueIn, fmtDate, gradeColor, statusColor } from '../../components/student/studentUtils'
-import { ACCEPT, fmtSize, iconFor } from '../../components/resources/resourceUtils'
-import { openAssignmentFile, uploadAssignmentFile } from '../../components/assignments/assignmentFiles'
-import { SUBJECT_OPTIONS } from '../../config/studentOptions'
-import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
+import { useT } from '../../i18n'
+import { subjectLabel } from '../../config/studentOptions'
+import { fmtDate, dueIn, statusColor, statusLabel } from '../../components/student/studentUtils'
+import { glassBtn, glassCard, glassInput } from '../../styles/glass'
+import ExamManager from '../../components/teacher/ExamManager'
 
-const panel = { ...glassCard, padding: '1.25rem', marginBottom: '1rem' }
-const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }
-const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '600' }
-const ghostBtn = { ...glassBtn, width: 'auto', padding: '0.45rem 1rem', fontSize: '0.85rem', background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }
-const smallBtn = { ...glassBtn, width: 'auto', padding: '0.45rem 1rem', fontSize: '0.85rem' }
-const isLink = (u) => typeof u === 'string' && /^https?:\/\//i.test(u)
-const MAX_FILES = 3
+/* ------------------------------------------------------------------ icons */
+const FileIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+    <polyline points="14 2 14 8 20 8"/>
+  </svg>
+)
+const DownloadIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7 10 12 15 17 10"/>
+    <line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+)
+const TrashIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="3 6 5 6 21 6"/>
+    <path d="M19 6l-1 14H6L5 6"/>
+    <path d="M10 11v6M14 11v6"/>
+    <path d="M9 6V4h6v2"/>
+  </svg>
+)
+const PencilIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+  </svg>
+)
 
-// A button that fetches a fresh signed link and opens the file
-function FileButton({ name, size, mime, linkPath }) {
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const open = async () => {
-    setBusy(true); setErr('')
-    try { await openAssignmentFile(linkPath) } catch (e) { setErr(e.message || 'Could not open the file.') }
-    setBusy(false)
-  }
+/* ------------------------------------------------------------------ helpers */
+function FileButton({ url, label }) {
+  if (!url) return null
   return (
-    <span style={{ display: 'inline-block', marginRight: '0.5rem', marginBottom: '0.4rem' }}>
-      <button type="button" onClick={open} disabled={busy} style={{ ...ghostBtn, display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
-        <span aria-hidden="true">{iconFor(mime)}</span>
-        <span style={{ overflowWrap: 'anywhere' }}>{busy ? 'Opening...' : name}</span>
-        {size ? <span style={{ ...muted, fontSize: '0.75rem' }}>{fmtSize(size)}</span> : null}
-      </button>
-      {err && <div role="alert" style={{ color: '#ffb3b3', fontSize: '0.8rem' }}>{err}</div>}
-    </span>
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', gap: '0.3rem', textDecoration: 'none', fontSize: 'var(--fs-sm)' }}
+    >
+      <FileIcon /> {label}
+    </a>
   )
 }
 
-// ISO date -> value for <input type="datetime-local">
-function toLocalInput(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d)) return ''
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-function ErrorBox({ children }) {
-  return (
-    <div style={{ background: 'rgba(255,80,80,0.15)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '10px', padding: '0.7rem 1rem', marginBottom: '1rem', color: '#ffb3b3', fontSize: '0.9rem' }}>
-      {children}
-    </div>
-  )
-}
-
-function AssignmentForm({ classes, assignment, onDone, onCancel }) {
-  const editing = !!assignment
-  const [classId, setClassId] = useState(assignment?.classId || classes[0]?.id || '')
-  const [title, setTitle] = useState(assignment?.title || '')
-  const [description, setDescription] = useState(assignment?.description || '')
-  const [due, setDue] = useState(toLocalInput(assignment?.dueDate))
-  const [subject, setSubject] = useState(assignment?.subject || '')
-  const [files, setFiles] = useState(assignment?.attachments || [])
-  const [uploading, setUploading] = useState(false)
+/* ------------------------------------------------------------------ AssignmentForm */
+function AssignmentForm({ classes, subjects, initial, onSave, onCancel, t }) {
+  const [form, setForm] = useState({
+    classId: initial?.classId || '',
+    subject: initial?.subject || '',
+    title: initial?.title || '',
+    description: initial?.description || '',
+    dueDate: initial?.dueDate || '',
+    totalMarks: initial?.totalMarks || '',
+  })
+  const [file, setFile] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const fileRef = useRef(null)
+  const [err, setErr] = useState(null)
+  const fileRef = useRef()
 
-  const addFile = async (e) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (files.length >= MAX_FILES) return setError(`You can attach up to ${MAX_FILES} files.`)
-    setUploading(true); setError('')
-    try {
-      const uploaded = await uploadAssignmentFile('/api/teacher/attachments/upload-url', file)
-      setFiles(f => [...f, uploaded])
-    } catch (err) {
-      setError(err.message || 'The file could not be uploaded.')
-    }
-    setUploading(false)
-  }
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
-  const save = async (e) => {
+  async function submit(e) {
     e.preventDefault()
-    setError('')
-    setSaving(true)
+    if (!form.classId) return setErr(t('teacher.errAssignClass'))
+    if (!form.subject) return setErr(t('teacher.errAssignSubject'))
+    if (!form.title.trim()) return setErr(t('teacher.errAssignTitle'))
+    setSaving(true); setErr(null)
     try {
-      const body = { classId, title, description, dueDate: due ? new Date(due).toISOString() : null, subject, attachments: files.map(f => ({ path: f.path, name: f.name })) }
-      if (editing) await apiFetch(`/api/teacher/assignments/${assignment.id}`, { method: 'PUT', body })
-      else await apiFetch('/api/teacher/assignments', { method: 'POST', body })
-      onDone()
-    } catch (err) {
-      setError(err.message || 'Could not save. Please try again.')
-      setSaving(false)
-    }
-  }
-
-  return (
-    <form onSubmit={save} style={panel}>
-      <h3 style={{ color: C.turquoise, marginBottom: '1rem' }}>{editing ? 'Edit assignment' : 'New assignment'}</h3>
-      {error && <ErrorBox>{error}</ErrorBox>}
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={labelStyle}>Class</label>
-        <select style={glassInput} value={classId} onChange={e => setClassId(e.target.value)} disabled={editing} required>
-          {classes.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}</option>)}
-        </select>
-      </div>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={labelStyle} htmlFor="as-subject">Subject</label>
-        <select id="as-subject" style={glassInput} value={subject} onChange={e => setSubject(e.target.value)}>
-          <option value="" style={{ background: '#001F3F' }}>General (no subject)</option>
-          {[...SUBJECT_OPTIONS, ...(subject && !SUBJECT_OPTIONS.includes(subject) ? [subject] : [])].map(sj => (
-            <option key={sj} value={sj} style={{ background: '#001F3F' }}>{sj}</option>
-          ))}
-        </select>
-        <div style={{ ...muted, fontSize: '0.8rem', marginTop: '0.3rem' }}>Grades are averaged and charted per subject.</div>
-      </div>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={labelStyle}>Title</label>
-        <input style={glassInput} value={title} onChange={e => setTitle(e.target.value)} maxLength={150} required placeholder="e.g. Fractions worksheet" />
-      </div>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={labelStyle}>Instructions</label>
-        <textarea style={{ ...glassInput, minHeight: '110px', resize: 'vertical' }} value={description}
-          onChange={e => setDescription(e.target.value)} maxLength={5000} placeholder="What should students do?" />
-      </div>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={labelStyle}>Due date</label>
-        <input style={glassInput} type="datetime-local" value={due} onChange={e => setDue(e.target.value)} />
-      </div>
-
-      <div style={{ marginBottom: '1.25rem' }}>
-        <label style={labelStyle} htmlFor="as-file">Attachments (up to {MAX_FILES}; PDF, Word, PowerPoint or image, 10MB each)</label>
-        {files.map(f => (
-          <div key={f.path} style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-            <span aria-hidden="true">{iconFor(f.mime)}</span>
-            <span style={{ overflowWrap: 'anywhere' }}>{f.name}</span>
-            <span style={{ ...muted, fontSize: '0.75rem' }}>{fmtSize(f.size)}</span>
-            <button type="button" onClick={() => setFiles(list => list.filter(x => x.path !== f.path))} style={{ ...ghostBtn, color: '#ffb3b3' }}>Remove</button>
-          </div>
-        ))}
-        {files.length < MAX_FILES && (
-          <>
-            <input id="as-file" ref={fileRef} type="file" accept={ACCEPT} onChange={addFile} disabled={uploading || saving} style={{ color: 'white', fontSize: '0.9rem' }} />
-            {uploading && <div style={{ ...muted, marginTop: '0.3rem' }}>Uploading...</div>}
-          </>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <button type="submit" disabled={saving || uploading} style={{ ...glassBtn, opacity: saving || uploading ? 0.7 : 1 }}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Create assignment'}</button>
-        <button type="button" onClick={onCancel} style={{ ...glassBtn, background: 'rgba(255,255,255,0.1)', color: 'white', boxShadow: 'none', border: '1px solid rgba(255,255,255,0.25)' }}>Cancel</button>
-      </div>
-    </form>
-  )
-}
-
-function SubmissionRow({ row, assignmentId, onSaved }) {
-  const sub = row.submission
-  const [grade, setGrade] = useState(sub?.grade ?? '')
-  const [feedback, setFeedback] = useState(sub?.feedback || '')
-  const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState(null) // { ok, text }
-
-  const status = sub ? sub.status : 'Not submitted'
-  const [reopening, setReopening] = useState(false)
-  const [history, setHistory] = useState(null) // null = closed, { loading, error, list }
-
-  const toggleHistory = async () => {
-    if (history) return setHistory(null)
-    setHistory({ loading: true, error: '', list: [] })
-    try {
-      const r = await apiFetch(`/api/teacher/submissions/${sub.id}/history`)
-      setHistory({ loading: false, error: '', list: r.history })
-    } catch (err) {
-      setHistory({ loading: false, error: err.message || 'Could not load the history.', list: [] })
-    }
-  }
-
-  const reopen = async () => {
-    if (!window.confirm(`Send ${row.student.name}'s work back for revision? Their grade will be cleared until you grade it again. Your feedback stays so they can see what to fix.`)) return
-    setMsg(null)
-    setReopening(true)
-    try {
-      await apiFetch(`/api/teacher/assignments/${assignmentId}/reopen`, { method: 'POST', body: { studentId: row.student.id } })
-      onSaved()
-    } catch (err) {
-      setMsg({ ok: false, text: err.message || 'Could not reopen.' })
-    }
-    setReopening(false)
-  }
-
-  const save = async () => {
-    setMsg(null)
-    setSaving(true)
-    try {
-      await apiFetch(`/api/teacher/assignments/${assignmentId}/grade`, {
-        method: 'PUT', body: { studentId: row.student.id, grade, feedback },
-      })
-      setMsg({ ok: true, text: 'Saved' })
-      onSaved()
-    } catch (err) {
-      setMsg({ ok: false, text: err.message || 'Could not save.' })
+      const fd = new FormData()
+      Object.entries(form).forEach(([k, v]) => v !== '' && fd.append(k, v))
+      if (file) fd.append('file', file)
+      const res = initial?.id
+        ? await apiFetch(`/api/teacher/assignments/${initial.id}`, { method: 'PUT', body: fd })
+        : await apiFetch('/api/teacher/assignments', { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(await res.text())
+      onSave()
+    } catch (ex) {
+      setErr(ex.message || t('common.somethingWentWrong'))
     } finally {
       setSaving(false)
     }
   }
 
+  const inp = { ...glassInput, width: '100%', boxSizing: 'border-box', marginBottom: 'var(--sp-2)' }
+  const lbl = { display: 'block', fontSize: 'var(--fs-sm)', fontWeight: 600, marginBottom: '0.3rem', color: 'var(--fg-muted)' }
+
   return (
-    <div style={panel}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-        <div>
-          <div style={{ fontWeight: 600 }}>{row.student.name}</div>
-          <div style={{ ...muted, fontSize: '0.8rem' }}>{sub ? `Handed in ${fmtDate(sub.submittedAt)}${sub.isLate ? ' · late' : ''}` : 'Nothing handed in yet'}</div>
-        </div>
-        <span style={{ color: statusColor(status), fontWeight: 700 }}>{status}</span>
+    <form onSubmit={submit} style={{ ...glassCard, padding: 'var(--sp-4)', marginBottom: 'var(--sp-4)' }}>
+      {err && <ErrorBox message={err} />}
+      <label style={lbl}>{t('teacher.class')}
+        <select value={form.classId} onChange={set('classId')} style={inp} required>
+          <option value="">{t('teacher.chooseClass')}</option>
+          {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </label>
+      <label style={lbl}>{t('teacher.subject')}
+        <select value={form.subject} onChange={set('subject')} style={inp} required>
+          <option value="">{t('common.select')}</option>
+          {subjects.map((s) => <option key={s.value} value={s.value}>{subjectLabel(s.value, t)}</option>)}
+        </select>
+      </label>
+      <label style={lbl}>{t('teacher.assignTitle')}
+        <input value={form.title} onChange={set('title')} style={inp} placeholder={t('teacher.assignTitleExample')} maxLength={120} required />
+      </label>
+      <label style={lbl}>{t('teacher.description')}
+        <textarea value={form.description} onChange={set('description')} style={{ ...inp, minHeight: '5rem', resize: 'vertical' }} maxLength={2000} />
+      </label>
+      <label style={lbl}>{t('teacher.dueDate')}
+        <input type="date" value={form.dueDate} onChange={set('dueDate')} style={inp} />
+      </label>
+      <label style={lbl}>{t('teacher.totalMarks')}
+        <input type="number" value={form.totalMarks} onChange={set('totalMarks')} style={inp} min={1} max={999} />
+      </label>
+      <label style={lbl}>{t('teacher.attachFile')}
+        <input ref={fileRef} type="file" onChange={(e) => setFile(e.target.files[0])} style={{ display: 'block', marginTop: '0.3rem' }} />
+      </label>
+      {initial?.fileUrl && <FileButton url={initial.fileUrl} label={t('teacher.currentFile')} />}
+      <div style={{ display: 'flex', gap: 'var(--sp-2)', marginTop: 'var(--sp-3)' }}>
+        <button type="submit" disabled={saving} style={glassBtn}>{saving ? t('settings.saving') : t('common.save')}</button>
+        <button type="button" onClick={onCancel} style={ghostBtn}>{t('common.cancel')}</button>
       </div>
+    </form>
+  )
+}
 
-      {sub?.content && (
-        <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>
-          {sub.content}
-        </div>
-      )}
-      {sub?.fileName && (
-        <div style={{ marginBottom: '0.5rem' }}>
-          <FileButton name={sub.fileName} size={sub.fileSize} mime={sub.mimeType} linkPath={`/api/teacher/submissions/${sub.id}/file-link`} />
-        </div>
-      )}
-      {!sub?.fileName && isLink(sub?.fileUrl) && (
-        <div style={{ marginBottom: '0.75rem' }}>
-          <a href={sub.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.turquoise, fontWeight: 600 }}>Open attached file</a>
-        </div>
-      )}
+/* ------------------------------------------------------------------ SubmissionRow */
+function SubmissionRow({ sub, totalMarks, onUpdated, t }) {
+  const [open, setOpen] = useState(false)
+  const [grade, setGrade] = useState(sub.grade ?? '')
+  const [feedback, setFeedback] = useState(sub.feedback || '')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
 
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <div style={{ width: '110px' }}>
-          <label style={{ ...labelStyle, marginBottom: '0.3rem' }}>Grade (0-100)</label>
-          <input style={{ ...glassInput, padding: '0.6rem 0.8rem' }} type="number" min="0" max="100" step="0.1"
-            value={grade} onChange={e => setGrade(e.target.value)} />
-        </div>
-        <div style={{ flex: 1, minWidth: '180px' }}>
-          <label style={{ ...labelStyle, marginBottom: '0.3rem' }}>Feedback</label>
-          <input style={{ ...glassInput, padding: '0.6rem 0.8rem' }} value={feedback} maxLength={2000}
-            onChange={e => setFeedback(e.target.value)} placeholder="Optional comment for the student" />
-        </div>
-        <button onClick={save} disabled={saving || grade === ''} style={{ ...smallBtn, opacity: saving || grade === '' ? 0.5 : 1 }}>
-          {saving ? 'Saving...' : 'Save grade'}
-        </button>
-        {sub && (
-          <button onClick={toggleHistory} style={ghostBtn}>{history ? 'Hide history' : 'Grade history'}</button>
+  async function saveGrade(e) {
+    e.preventDefault()
+    setSaving(true); setErr(null)
+    try {
+      const res = await apiFetch(`/api/teacher/submissions/${sub.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grade: grade === '' ? null : Number(grade), feedback }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      onUpdated()
+      setOpen(false)
+    } catch (ex) {
+      setErr(ex.message || t('common.somethingWentWrong'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function reopen() {
+    try {
+      const res = await apiFetch(`/api/teacher/submissions/${sub.id}/reopen`, { method: 'POST' })
+      if (!res.ok) throw new Error(await res.text())
+      onUpdated()
+    } catch (ex) {
+      setErr(ex.message || t('common.somethingWentWrong'))
+    }
+  }
+
+  const inp = { ...glassInput, width: '100%', boxSizing: 'border-box' }
+
+  return (
+    <div style={{ padding: 'var(--sp-2) 0', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', flexWrap: 'wrap', minWidth: 0 }}>
+        <span style={{ flex: 1, minWidth: 0, overflowWrap: 'break-word', fontWeight: 500 }}>{sub.studentName}</span>
+        {sub.grade !== null && sub.grade !== undefined && (
+          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-muted)' }}>
+            {sub.grade}{totalMarks ? `/${totalMarks}` : ''}
+          </span>
         )}
-        {sub && status !== 'Reopened' && (
-          <button onClick={reopen} disabled={reopening || saving} style={{ ...ghostBtn, opacity: reopening ? 0.6 : 1 }}>
-            {reopening ? 'Reopening...' : 'Reopen for revision'}
+        <Chip label={sub.status} color={statusColor(sub.status)} />
+        {sub.fileUrl && (
+          <a href={sub.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--fg-muted)' }} aria-label={t('teacher.downloadSubmission')}>
+            <DownloadIcon />
+          </a>
+        )}
+        <button style={ghostBtn} onClick={() => setOpen((o) => !o)} aria-label={t('teacher.gradeLabel')}>
+          <PencilIcon />
+        </button>
+        {sub.status === 'graded' && (
+          <button style={ghostBtn} onClick={reopen} aria-label={t('teacher.reopen')}>
+            <Icon name="refresh" size={14} />
           </button>
         )}
       </div>
-      {status === 'Reopened' && <div style={{ ...muted, fontSize: '0.85rem', marginTop: '0.5rem' }}>Sent back to the student. You can grade it again once they hand it in.</div>}
-      {msg && <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: msg.ok ? '#7CFC9A' : '#ffb3b3' }}>{msg.text}</div>}
-      {history && (
-        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-          {history.loading && <div style={muted}>Loading...</div>}
-          {history.error && <div role="alert" style={{ color: '#ffb3b3', fontSize: '0.85rem' }}>{history.error}</div>}
-          {!history.loading && !history.error && history.list.length === 0 && <div style={muted}>No changes recorded yet.</div>}
-          {history.list.map(h => (
-            <div key={h.id} style={{ fontSize: '0.85rem', marginBottom: '0.5rem', lineHeight: 1.45 }}>
-              <strong>
-                {h.action === 'graded' ? `Graded ${h.newGrade}%`
-                  : h.action === 'regraded' ? `Changed ${h.oldGrade}% to ${h.newGrade}%`
-                  : `Reopened${h.oldGrade !== null ? ` (was ${h.oldGrade}%)` : ''}`}
-              </strong>
-              <span style={muted}> · {h.changedBy} · {fmtDate(h.createdAt)}</span>
-              {h.action !== 'reopened' && h.newFeedback !== h.oldFeedback && h.newFeedback && (
-                <div style={{ ...muted, fontSize: '0.8rem' }}>Feedback: {h.newFeedback}</div>
-              )}
-            </div>
-          ))}
+      {sub.submittedAt && (
+        <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--fg-muted)', marginTop: '0.2rem' }}>
+          {t('teacher.submittedAt')} {fmtDate(sub.submittedAt)}
+          {sub.history?.length > 0 && <span style={{ marginInlineStart: 'var(--sp-2)' }}>{t('teacher.resubmissions', { n: sub.history.length })}</span>}
         </div>
+      )}
+      {open && (
+        <form onSubmit={saveGrade} style={{ marginTop: 'var(--sp-2)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+          {err && <ErrorBox message={err} />}
+          <input
+            type="number"
+            value={grade}
+            onChange={(e) => setGrade(e.target.value)}
+            placeholder={t('teacher.mark')}
+            min={0}
+            max={totalMarks || 999}
+            style={inp}
+          />
+          <textarea
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder={t('teacher.feedbackOptional')}
+            style={{ ...inp, minHeight: '3.5rem', resize: 'vertical' }}
+            maxLength={1000}
+          />
+          <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+            <button type="submit" disabled={saving} style={glassBtn}>{saving ? t('settings.saving') : t('common.save')}</button>
+            <button type="button" onClick={() => setOpen(false)} style={ghostBtn}>{t('common.cancel')}</button>
+          </div>
+        </form>
       )}
     </div>
   )
 }
 
-function SubmissionsPanel({ assignmentId, onBack }) {
-  const { data, loading, error, reload } = useApiData(`/api/teacher/assignments/${assignmentId}/submissions`)
+/* ------------------------------------------------------------------ SubmissionsPanel */
+function SubmissionsPanel({ assignment, onClose, t }) {
+  const { data, loading, error, reload } = useApiData(`/api/teacher/submissions?assignmentId=${assignment.id}`)
+
+  return (
+    <div style={{ ...glassCard, padding: 'var(--sp-4)', marginBottom: 'var(--sp-4)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', marginBottom: 'var(--sp-3)' }}>
+        <span style={{ flex: 1, fontWeight: 700, fontSize: 'var(--fs-lg)' }}>{t('teacher.submissionsFor', { title: assignment.title })}</span>
+        <button style={ghostBtn} onClick={onClose} aria-label={t('common.close')}><Icon name="close" size={16} /></button>
+      </div>
+      {loading && <SkeletonList />}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+      {data && (
+        data.submissions?.length
+          ? data.submissions.map((s) => (
+              <SubmissionRow key={s.id} sub={s} totalMarks={assignment.totalMarks} onUpdated={reload} t={t} />
+            ))
+          : <p style={muted}>{t('teacher.noSubmissions')}</p>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ AssignmentCard */
+function AssignmentCard({ item, onEdit, onDelete, onViewSubs, expanded, t }) {
+  const [confirmDel, setConfirmDel] = useState(false)
+
+  return (
+    <div style={{ ...panel, marginBottom: 'var(--sp-3)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--sp-2)', flexWrap: 'wrap', minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, overflowWrap: 'break-word' }}>{item.title}</div>
+          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-muted)', marginTop: '0.2rem' }}>
+            {item.className} · {subjectLabel(item.subject, t)}
+            {item.dueDate && <span> · {dueIn(item.dueDate, t)}</span>}
+            {item.totalMarks && <span> · {t('teacher.outOf', { n: item.totalMarks })}</span>}
+          </div>
+          {item.description && (
+            <div style={{ fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-1)', color: 'var(--fg)', overflowWrap: 'break-word' }}>{item.description}</div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--sp-1)', flexShrink: 0 }}>
+          {item.fileUrl && (
+            <a href={item.fileUrl} target="_blank" rel="noopener noreferrer" style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center' }} aria-label={t('common.download')}>
+              <DownloadIcon />
+            </a>
+          )}
+          <button style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center' }} onClick={() => onEdit(item)} aria-label={t('common.edit')}>
+            <PencilIcon />
+          </button>
+          <button
+            style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', color: confirmDel ? 'var(--fg)' : undefined }}
+            onClick={() => confirmDel ? onDelete(item.id) : setConfirmDel(true)}
+            aria-label={confirmDel ? t('common.confirm') : t('common.delete')}
+          >
+            {confirmDel ? <Icon name="check" size={14} /> : <TrashIcon />}
+          </button>
+          {confirmDel && (
+            <button style={ghostBtn} onClick={() => setConfirmDel(false)} aria-label={t('common.cancel')}>
+              <Icon name="close" size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+      <div style={{ marginTop: 'var(--sp-2)', display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--fg-muted)' }}>
+          {t('teacher.submittedCount', { n: item.submittedCount ?? 0, total: item.totalStudents ?? 0 })}
+        </span>
+        <button style={{ ...smallBtn, fontSize: 'var(--fs-xs)' }} onClick={() => onViewSubs(item)}>
+          {expanded ? t('teacher.hideSubmissions') : t('teacher.viewSubmissions')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ AssignmentsTab */
+function AssignmentsTab({ t }) {
+  const { data, loading, error, reload } = useApiData('/api/teacher/assignments')
+  const [creating, setCreating] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [viewSubs, setViewSubs] = useState(null)
+
+  async function deleteAssignment(id) {
+    try {
+      const res = await apiFetch(`/api/teacher/assignments/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
+      reload()
+    } catch {
+      /* silently reload */
+      reload()
+    }
+  }
+
+  if (loading) return <SkeletonList />
+  if (error) return <ErrorBox message={error} onRetry={reload} />
+
+  const classes = data?.classes || []
+  const assignments = data?.assignments || []
+  const subjects = data?.subjects || []
 
   return (
     <>
-      <button onClick={onBack} style={{ ...ghostBtn, marginBottom: '1rem' }}>← Back to assignments</button>
-      {loading && <p style={muted}>Loading...</p>}
-      {error && <ErrorBox>{error}</ErrorBox>}
-      {data && (
-        <>
-          <div style={panel}>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{data.assignment.title}</div>
-            <div style={muted}>{data.assignment.className}{data.assignment.dueDate ? ` · Due ${fmtDate(data.assignment.dueDate)}` : ''}</div>
-            {data.assignment.description && (
-              <div style={{ marginTop: '0.75rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{data.assignment.description}</div>
-            )}
-            {data.assignment.attachments.length > 0 && (
-              <div style={{ marginTop: '0.75rem' }}>
-                {data.assignment.attachments.map(f => (
-                  <FileButton key={f.index} name={f.name} size={f.size} mime={f.mime} linkPath={`/api/assignments/${assignmentId}/attachments/${f.index}/link`} />
-                ))}
-              </div>
-            )}
-          </div>
-          {data.rows.length === 0
-            ? <div style={{ ...panel, ...muted, textAlign: 'center' }}>No students are in this class yet.</div>
-            : data.rows.map(row => (
-                <SubmissionRow key={row.student.id} row={row} assignmentId={assignmentId} onSaved={reload} />
-              ))}
-        </>
+      {data?.canWrite && (
+        <button
+          style={{ ...glassBtn, marginBottom: 'var(--sp-4)', display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-1)' }}
+          onClick={() => { setCreating(true); setEditing(null) }}
+        >
+          <Icon name="plus" size={14} /> {t('teacher.newAssignment')}
+        </button>
       )}
+
+      {(creating || editing) && (
+        <AssignmentForm
+          classes={classes}
+          subjects={subjects}
+          initial={editing}
+          onSave={() => { setCreating(false); setEditing(null); reload() }}
+          onCancel={() => { setCreating(false); setEditing(null) }}
+          t={t}
+        />
+      )}
+
+      {assignments.length === 0 && !creating && (
+        <p style={muted}>{t('teacher.noAssignments')}</p>
+      )}
+
+      {assignments.map((item) => (
+        <React.Fragment key={item.id}>
+          <AssignmentCard
+            item={item}
+            onEdit={(a) => { setEditing(a); setCreating(false) }}
+            onDelete={deleteAssignment}
+            onViewSubs={(a) => setViewSubs(viewSubs?.id === a.id ? null : a)}
+            expanded={viewSubs?.id === item.id}
+            t={t}
+          />
+          {viewSubs?.id === item.id && (
+            <SubmissionsPanel assignment={viewSubs} onClose={() => setViewSubs(null)} t={t} />
+          )}
+        </React.Fragment>
+      ))}
     </>
   )
 }
 
+/* ------------------------------------------------------------------ main */
 export default function TeacherAssignments() {
-  const list = useApiData('/api/teacher/assignments')
-  const classes = useApiData('/api/teacher/classes')
-  const [form, setForm] = useState(null)      // null | 'new' | assignment being edited
-  const [viewing, setViewing] = useState(null) // assignment id whose submissions are open
-  const [filter, setFilter] = useState('')
-  const [actionError, setActionError] = useState('')
+  const t = useT('teacher')
+  const [tab, setTab] = useState('assignments')
 
-  const classList = classes.data?.classes || []
-
-  const remove = async (a) => {
-    if (!window.confirm(`Delete "${a.title}"? This can't be undone.`)) return
-    setActionError('')
-    try {
-      await apiFetch(`/api/teacher/assignments/${a.id}`, { method: 'DELETE' })
-      list.reload()
-    } catch (err) {
-      setActionError(err.message || 'Could not delete the assignment.')
-    }
-  }
-
-  if (viewing) {
-    return (
-      <TeacherPage title="Submissions" icon="📝">
-        <SubmissionsPanel assignmentId={viewing} onBack={() => { setViewing(null); list.reload() }} />
-      </TeacherPage>
-    )
-  }
-
-  const shown = (list.data?.assignments || []).filter(a => !filter || a.classId === filter)
+  const tabs = [
+    { key: 'assignments', label: t('teacher.tabAssignments') },
+    { key: 'exams', label: t('shell.f_exams') },
+  ]
 
   return (
-    <TeacherPage title="Assignments" icon="📝">
-      {(list.loading || classes.loading) && <p style={muted}>Loading...</p>}
-      {list.error && <ErrorBox>{list.error}</ErrorBox>}
-      {actionError && <ErrorBox>{actionError}</ErrorBox>}
-
-      {!classes.loading && classes.data && classList.length === 0 && (
-        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>
-          You need a class before you can set assignments. Add the grade and class you teach in My Classes first.
-        </div>
-      )}
-
-      {form && (
-        <AssignmentForm
-          classes={classList}
-          assignment={form === 'new' ? null : form}
-          onCancel={() => setForm(null)}
-          onDone={() => { setForm(null); list.reload() }}
-        />
-      )}
-
-      {!form && classList.length > 0 && (
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.25rem', alignItems: 'center' }}>
-          <button onClick={() => setForm('new')} style={{ ...glassBtn, width: 'auto', padding: '0.6rem 1.4rem' }}>+ New assignment</button>
-          {classList.length > 1 && (
-            <select style={{ ...glassInput, width: 'auto', minWidth: '180px' }} value={filter} onChange={e => setFilter(e.target.value)}>
-              <option value="" style={{ background: '#001F3F' }}>All classes</option>
-              {classList.map(c => <option key={c.id} value={c.id} style={{ background: '#001F3F' }}>{c.name}</option>)}
-            </select>
-          )}
-        </div>
-      )}
-
-      {list.data && classList.length > 0 && shown.length === 0 && !form && (
-        <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>No assignments yet. Create your first one above.</div>
-      )}
-
-      {!form && shown.map(a => (
-        <div key={a.id} style={panel}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>{a.title}</div>
-              <div style={{ ...muted, fontSize: '0.85rem' }}>
-                {a.className}{a.subject ? ` · ${a.subject}` : ''} · {a.dueDate ? `${fmtDate(a.dueDate)} · ${dueIn(a.dueDate)}` : 'No due date'}{a.attachments?.length ? ` · ${a.attachments.length} file${a.attachments.length === 1 ? '' : 's'} attached` : ''}
-              </div>
-            </div>
-            <div style={{ textAlign: 'right', fontSize: '0.85rem' }}>
-              <div style={muted}>{a.submitted} of {a.studentCount} submitted</div>
-              <div style={{ color: a.graded === a.submitted && a.submitted > 0 ? gradeColor(100) : 'rgba(255,255,255,0.6)' }}>{a.graded} graded</div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.9rem', flexWrap: 'wrap' }}>
-            <button onClick={() => setViewing(a.id)} style={smallBtn}>Submissions & grading</button>
-            <button onClick={() => setForm(a)} style={ghostBtn}>Edit</button>
-            <button onClick={() => remove(a)} style={{ ...ghostBtn, color: '#ffb3b3' }}>Delete</button>
-          </div>
-        </div>
-      ))}
+    <TeacherPage title={t('teacher.pageTitle')}>
+      <SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />
+      <div style={{ marginTop: 'var(--sp-4)' }}>
+        {tab === 'assignments' && <AssignmentsTab t={t} />}
+        {tab === 'exams' && <ExamManager />}
+      </div>
     </TeacherPage>
   )
 }
