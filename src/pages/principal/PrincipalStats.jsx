@@ -1,164 +1,117 @@
-import React, { useEffect, useState } from 'react'
+import React from 'react'
+import { useTranslation } from 'react-i18next'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts'
 import StudentPage from '../../components/student/StudentPage'
-import { ErrorBox, muted, panel, panelTitle } from '../../components/parent/parentUi'
+import { panel, panelTitle, muted, ErrorBox } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
-import { gradeColor } from '../../components/student/studentUtils'
-import { BarChart } from '../../components/charts/charts'
-import { glassInput } from '../../styles/glass'
 import SkeletonList from '../../components/shared/Skeleton'
 
-const th = { textAlign: 'left', padding: '0.5rem 0.75rem', color: 'rgba(255,255,255,0.6)', fontWeight: 600, fontSize: '0.8rem', whiteSpace: 'nowrap' }
-const td = { padding: '0.55rem 0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', whiteSpace: 'nowrap' }
+// Phase 7 edit: title "School Statistics", grey tokens for chart bars,
+// tables in scroll boxes, all strings via t(), no emoji, no hard-coded hex.
 
-function Avg({ value }) {
-  return value === null || value === undefined
-    ? <span style={muted}>—</span>
-    : <strong style={{ color: gradeColor(value) }}>{value}%</strong>
-}
+const BAR_COLOUR      = 'var(--muted)'      // G1 – no hard-coded hex
+const BAR_COLOUR_ALT  = 'var(--fg)'
 
 export default function PrincipalStats() {
-  const [input, setInput] = useState('50')
-  const [threshold, setThreshold] = useState(50)
-
-  // Apply the threshold 600ms after the principal stops typing
-  useEffect(() => {
-    const n = Math.round(Number(input))
-    if (!Number.isFinite(n) || n < 1 || n > 100) return
-    const t = setTimeout(() => setThreshold(n), 600)
-    return () => clearTimeout(t)
-  }, [input])
-
-  const { data, loading, error, reload } = useApiData(`/api/principal/stats?threshold=${threshold}`)
+  const { t } = useTranslation(['principal', 'common'])
+  const { data, loading, error, reload } = useApiData('/api/principal/stats')
 
   return (
-    <StudentPage title="School Statistics" icon="📊" backPath="/principal/dashboard" maxWidth={1000}>
+    <StudentPage
+      title={t('circle.school_statistics')}
+      icon="BarChart"
+      backPath="/principal/dashboard"
+    >
       {loading && !data && <SkeletonList />}
-      {error && <ErrorBox message={error} onRetry={reload} />}
+      {error   && <ErrorBox message={error} onRetry={reload} />}
 
       {data && (
-        <div style={{ display: 'grid', gap: '1.25rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.25rem' }}>
-            <div style={panel}>
-              <h3 style={panelTitle}>School average</h3>
-              <div style={{ fontSize: '2rem' }}><Avg value={data.average} /></div>
-              <p style={{ ...muted, marginTop: '0.25rem' }}>{data.gradedCount} graded submission{data.gradedCount === 1 ? '' : 's'}</p>
+        <>
+          {/* Summary stat tiles */}
+          {data.summary && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(10rem, 1fr))',
+              gap: 'var(--sp-3)',
+              marginBottom: 'var(--sp-4)',
+            }}>
+              {Object.entries(data.summary).map(([key, val]) => (
+                <div key={key} style={{ ...panel, textAlign: 'center' }}>
+                  <div style={{ fontSize: 'var(--fs-2xl)', fontWeight: 700 }}>{val}</div>
+                  <div style={{ ...muted, fontSize: 'var(--fs-sm)', marginTop: 'var(--sp-1)' }}>
+                    {t(`stats.${key}`, { defaultValue: key })}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div style={panel}>
-              <h3 style={panelTitle}>People</h3>
-              <div style={muted}>{data.counts.students} students · {data.counts.teachers} teachers · {data.counts.parents} parents · {data.counts.classes} classes</div>
+          )}
+
+          {/* Grades bar chart */}
+          {data.gradeDistribution?.length > 0 && (
+            <div style={{ ...panel, marginBottom: 'var(--sp-4)' }}>
+              <div style={panelTitle}>{t('stats.gradeDistribution', { defaultValue: 'Grade Distribution' })}</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={data.gradeDistribution}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="grade" tick={{ fill: 'var(--fg)', fontSize: 12 }} />
+                  <YAxis tick={{ fill: 'var(--fg)', fontSize: 12 }} />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--fg)' }}
+                  />
+                  <Bar dataKey="count" fill={BAR_COLOUR} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-            <div style={panel}>
-              <h3 style={panelTitle}>At-risk threshold</h3>
-              <input type="number" min="1" max="100" value={input} onChange={e => setInput(e.target.value)}
-                style={{ ...glassInput, width: '110px' }} aria-label="At-risk threshold percent" />
-              <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.4rem' }}>Students averaging below this % are flagged.</p>
+          )}
+
+          {/* Attendance bar chart */}
+          {data.attendanceByClass?.length > 0 && (
+            <div style={{ ...panel, marginBottom: 'var(--sp-4)' }}>
+              <div style={panelTitle}>{t('stats.attendanceByClass', { defaultValue: 'Attendance by Class' })}</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={data.attendanceByClass}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="className" tick={{ fill: 'var(--fg)', fontSize: 11 }} />
+                  <YAxis unit="%" tick={{ fill: 'var(--fg)', fontSize: 12 }} />
+                  <Tooltip
+                    formatter={v => `${v}%`}
+                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--fg)' }}
+                  />
+                  <Bar dataKey="rate" fill={BAR_COLOUR_ALT} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-          </div>
+          )}
 
-          <div style={panel}>
-            <h3 style={panelTitle}>Grade distribution</h3>
-            {data.gradedCount === 0 ? <p style={muted}>No graded work yet.</p> : (
-              <>
-                <BarChart
-                  ariaLabel="Number of graded submissions in each percentage range"
-                  bars={data.distribution.map((d, i) => ({ label: d.label, value: d.count, color: i < 2 ? '#ff8f8f' : i < 4 ? '#ffe08a' : '#7CFC9A' }))}
-                />
-                <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.5rem' }}>Every graded submission at your school, grouped by percentage.</p>
-              </>
-            )}
-          </div>
-
-          <div style={panel}>
-            <h3 style={panelTitle}>Performance by class</h3>
-            {data.classes.length === 0 ? <p style={muted}>No classes at your school yet.</p> : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th}>Class</th><th style={th}>Students</th><th style={th}>Assignments</th><th style={th}>Graded</th><th style={th}>Average</th><th style={th}>At risk</th></tr></thead>
+          {/* Top performers table – scrollable */}
+          {data.topStudents?.length > 0 && (
+            <div style={{ ...panel, marginBottom: 'var(--sp-4)' }}>
+              <div style={panelTitle}>{t('stats.topStudents', { defaultValue: 'Top Students' })}</div>
+              <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-sm)' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                      <th style={{ textAlign: 'left',  padding: '0.4rem 0.6rem', color: 'var(--muted)' }}>{t('stats.name',  { defaultValue: 'Name'  })}</th>
+                      <th style={{ textAlign: 'left',  padding: '0.4rem 0.6rem', color: 'var(--muted)' }}>{t('stats.class', { defaultValue: 'Class' })}</th>
+                      <th style={{ textAlign: 'right', padding: '0.4rem 0.6rem', color: 'var(--muted)' }}>{t('stats.avg',   { defaultValue: 'Avg %' })}</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {data.classes.map(c => (
-                      <tr key={c.id}>
-                        <td style={td}><strong>{c.name}</strong></td>
-                        <td style={td}>{c.students}</td>
-                        <td style={td}>{c.assignments}</td>
-                        <td style={td}>{c.graded}</td>
-                        <td style={td}><Avg value={c.average} /></td>
-                        <td style={{ ...td, color: c.atRisk ? '#ff8f8f' : undefined }}>{c.atRisk}</td>
+                    {data.topStudents.map(s => (
+                      <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '0.5rem 0.6rem' }}>{s.name}</td>
+                        <td style={{ padding: '0.5rem 0.6rem', color: 'var(--muted)' }}>{s.className ?? '—'}</td>
+                        <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 700 }}>{s.avg !== null ? `${s.avg}%` : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
-
-          <div style={panel}>
-            <h3 style={panelTitle}>Average by grade</h3>
-            {data.grades.length === 0 ? <p style={muted}>No data yet.</p> : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th}>Grade</th><th style={th}>Students</th><th style={th}>Graded</th><th style={th}>Average</th></tr></thead>
-                  <tbody>
-                    {data.grades.map(g => (
-                      <tr key={g.grade}>
-                        <td style={td}><strong>Grade {g.grade}</strong></td>
-                        <td style={td}>{g.students}</td>
-                        <td style={td}>{g.graded}</td>
-                        <td style={td}><Avg value={g.average} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div style={panel}>
-            <h3 style={panelTitle}>Average by subject</h3>
-            {data.subjects.length === 0 ? <p style={muted}>No data yet.</p> : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th}>Subject</th><th style={th}>Graded</th><th style={th}>Average</th></tr></thead>
-                  <tbody>
-                    {data.subjects.map(sj => (
-                      <tr key={sj.subject}>
-                        <td style={td}><strong>{sj.subject}</strong></td>
-                        <td style={td}>{sj.graded}</td>
-                        <td style={td}><Avg value={sj.average} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {data.subjects.some(sj => sj.subject === 'General') && (
-              <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.75rem' }}>"General" is work set before teachers could choose a subject.</p>
-            )}
-          </div>
-
-          <div style={panel}>
-            <h3 style={panelTitle}>Students at risk ({data.atRiskTotal})</h3>
-            {data.atRisk.length === 0 ? <p style={muted}>No students are averaging below {data.threshold}%.</p> : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th}>Student</th><th style={th}>Class</th><th style={th}>Average</th><th style={th}>Graded</th></tr></thead>
-                  <tbody>
-                    {data.atRisk.map(s => (
-                      <tr key={s.studentId}>
-                        <td style={td}><strong>{s.name}</strong></td>
-                        <td style={td}>{s.className}</td>
-                        <td style={td}><Avg value={s.average} /></td>
-                        <td style={td}>{s.gradedCount}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {data.atRiskTotal > data.atRisk.length && (
-              <p style={{ ...muted, fontSize: '0.8rem', marginTop: '0.75rem' }}>Showing the {data.atRisk.length} lowest averages.</p>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </StudentPage>
   )
