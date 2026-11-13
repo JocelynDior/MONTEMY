@@ -1,72 +1,98 @@
 import React, { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import StudentPage from '../../components/student/StudentPage'
-import { Chip, ErrorBox, muted, panel } from '../../components/parent/parentUi'
+import { panel, panelTitle, muted, Chip, ErrorBox } from '../../components/parent/parentUi'
+import { glassInput, glassBtn } from '../../styles/glass'
 import { useApiData } from '../../hooks/useApiData'
 import SkeletonList from '../../components/shared/Skeleton'
+import Icon from '../../components/shared/Icon'
 
-const TABS = ['Teachers', 'Other staff']
+// Phase 7 edit: tokens only (no hard-coded hex), translated via t(),
+// staff role shown in counts, no emoji (Icon component used), G6 schoolmember → staff.
 
 export default function PrincipalStaff() {
-  const [tab, setTab] = useState('Teachers')
+  const { t } = useTranslation(['principal', 'common'])
+  const [search, setSearch] = useState('')
   const { data, loading, error, reload } = useApiData('/api/principal/staff')
 
+  const filtered = (data?.staff ?? []).filter(m => {
+    if (!search.trim()) return true
+    const q = search.toLowerCase()
+    return (
+      m.name?.toLowerCase().includes(q) ||
+      m.role?.toLowerCase().includes(q) ||
+      m.email?.toLowerCase().includes(q)
+    )
+  })
+
   return (
-    <StudentPage title="Staff" icon="👥" backPath="/principal/dashboard">
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
-        {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            style={{
-              cursor: 'pointer', padding: '0.5rem 1.1rem', borderRadius: '999px', color: 'white', fontSize: '0.9rem',
-              fontWeight: tab === t ? 700 : 400,
-              border: tab === t ? '1px solid rgba(var(--color-primary-rgb),0.9)' : '1px solid rgba(255,255,255,0.2)',
-              background: tab === t ? 'rgba(var(--color-primary-rgb),0.25)' : 'rgba(255,255,255,0.06)',
-            }}>
-            {t}{data ? ` (${t === 'Teachers' ? data.teachers.length : data.members.length})` : ''}
-          </button>
-        ))}
-      </div>
+    <StudentPage title={t('circle.staff')} icon="Users" backPath="/principal/dashboard">
 
-      {loading && <SkeletonList />}
-      {error && <ErrorBox message={error} onRetry={reload} />}
-
-      {data && tab === 'Teachers' && (
-        data.teachers.length === 0
-          ? <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>No teachers at your school yet.</div>
-          : data.teachers.map(t => (
-            <div key={t.id} style={{ ...panel, marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontWeight: 700 }}>{t.name}</div>
-                  <div style={muted}>{t.username ? `@${t.username}` : ''}</div>
-                </div>
-                <Chip color={t.isVerified ? '#7CFC9A' : '#ffe08a'}>{t.isVerified ? 'Verified' : 'Awaiting verification'}</Chip>
-              </div>
-              <div style={{ ...muted, marginTop: '0.6rem' }}>
-                {t.classCount === 0
-                  ? 'No classes added yet.'
-                  : `${t.classCount} class${t.classCount === 1 ? '' : 'es'} · ${t.studentCount} student${t.studentCount === 1 ? '' : 's'}`}
-              </div>
-              {t.classes.length > 0 && (
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
-                  {t.classes.map(c => <Chip key={c} color="#8fd3ff">{c}</Chip>)}
-                </div>
-              )}
-            </div>
-          ))
+      {/* Role count chips */}
+      {data?.roleCounts && (
+        <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', marginBottom: 'var(--sp-3)' }}>
+          {Object.entries(data.roleCounts).map(([role, count]) => (
+            <Chip key={role}>
+              {t(`roles.${role}`, { defaultValue: role })} · {count}
+            </Chip>
+          ))}
+        </div>
       )}
 
-      {data && tab === 'Other staff' && (
-        data.members.length === 0
-          ? <div style={{ ...panel, ...muted, textAlign: 'center', padding: '2rem' }}>No other staff accounts at your school yet.</div>
-          : data.members.map(m => (
-            <div key={m.id} style={{ ...panel, marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontWeight: 700 }}>{m.name}</div>
-                <div style={muted}>{m.username ? `@${m.username}` : ''}{m.department ? ` · ${m.department}` : ''}</div>
-              </div>
-              <Chip color={m.isVerified ? '#7CFC9A' : '#ffe08a'}>{m.isVerified ? 'Verified' : 'Awaiting verification'}</Chip>
+      {/* Search */}
+      <div style={{ marginBottom: 'var(--sp-3)' }}>
+        <input
+          type="search"
+          placeholder={t('common:search')}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ ...glassInput, width: '100%' }}
+        />
+      </div>
+
+      {loading && !data && <SkeletonList />}
+      {error && <ErrorBox message={error} onRetry={reload} />}
+
+      {data && (
+        filtered.length === 0
+          ? <p style={muted}>{t('staff.noResults', { defaultValue: 'No staff found.' })}</p>
+          : (
+            <div style={{ display: 'grid', gap: 'var(--sp-3)' }}>
+              {filtered.map(member => (
+                <div key={member.id} style={{
+                  ...panel,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--sp-3)',
+                  flexWrap: 'wrap',
+                }}>
+                  {/* Avatar placeholder */}
+                  <div style={{
+                    width: '2.75rem', height: '2.75rem', flexShrink: 0,
+                    borderRadius: '50%',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 'var(--fs-lg)', fontWeight: 700, color: 'var(--muted)',
+                  }}>
+                    {(member.name ?? '?')[0].toUpperCase()}
+                  </div>
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 'var(--fs-base)' }}>{member.name}</div>
+                    <div style={{ ...muted, fontSize: 'var(--fs-sm)' }}>
+                      {t(`roles.${member.role}`, { defaultValue: member.role })}
+                      {member.email && ` · ${member.email}`}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 'var(--sp-2)', flexShrink: 0 }}>
+                    <Chip>{member.status ?? 'active'}</Chip>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))
+          )
       )}
     </StudentPage>
   )
