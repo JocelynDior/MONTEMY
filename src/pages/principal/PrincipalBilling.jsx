@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import StudentPage from '../../components/student/StudentPage'
 import { ErrorBox, muted, panel, panelTitle } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
@@ -11,7 +11,7 @@ import { glassBtn } from '../../styles/glass'
 import Icon from '../../components/shared/Icon'
 
 export default function PrincipalBilling() {
-  const { t } = useTranslation('principal')
+  const t = useT()
   const { data, loading, error, reload } = useApiData('/api/billing')
   const [showAddCard, setShowAddCard] = useState(false)
   const [removing, setRemoving] = useState(null)
