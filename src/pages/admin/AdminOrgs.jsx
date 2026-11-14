@@ -65,7 +65,7 @@ export default function AdminOrgs() {
           <select aria-label="Filter by type" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ ...glassInput, padding: '0.6rem 0.9rem', fontSize: '0.9rem' }}>
             <option value="" style={opt}>All types</option>
             <option value="school" style={opt}>Schools</option>
-            <option value="tutor" style={opt}>Tutor organisations</option>
+            <option value="tutor" style={opt}>Firms</option>
           </select>
           <select aria-label="Filter by status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...glassInput, padding: '0.6rem 0.9rem', fontSize: '0.9rem' }}>
             <option value="" style={opt}>Any status</option>
@@ -102,7 +102,7 @@ export default function AdminOrgs() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <Chip color="#8fd3ff">{o.type === 'school' ? 'School' : 'Tutor organisation'}</Chip>
+                    <Chip color="#8fd3ff">{o.type === 'school' ? 'School' : 'Firm'}</Chip>
                     <Chip color={o.isActive ? '#7CFC9A' : '#ff8f8f'}>{o.isActive ? 'Active' : 'Inactive'}</Chip>
                   </div>
                 </div>
