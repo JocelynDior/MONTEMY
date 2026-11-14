@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../components/parent/parentUi'
@@ -9,7 +9,7 @@ import Icon from '../../components/icons/Icon'
 import StudentPage from '../../components/shared/StudentPage'
 
 export default function AdminHelpInbox() {
-  const { t } = useTranslation('admin')
+  const t = useT()
   const [activeChat, setActiveChat] = useState(null)
   const { data, loading, error, reload } = useApiData('/api/help/admin/chats')
 
