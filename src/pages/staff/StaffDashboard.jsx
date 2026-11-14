@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React from 'react'
-import { useTranslation } from 'react-i18next'
 import DashboardShell from '../../components/layout/DashboardShell'
 import FeatureIcon from '../../components/shared/FeatureIcon'
 
@@ -14,7 +14,7 @@ const cards = [
 ]
 
 export default function StaffDashboard() {
-  const { t } = useTranslation('staff')
+  const t = useT()
 
   // Build translated card list
   const translatedCards = cards.map(c => ({
