@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React from 'react'
-import { useTranslation } from 'react-i18next'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -15,7 +15,7 @@ const BAR_COLOUR      = 'var(--muted)'      // G1 – no hard-coded hex
 const BAR_COLOUR_ALT  = 'var(--fg)'
 
 export default function PrincipalStats() {
-  const { t } = useTranslation(['principal', 'common'])
+  const t = useT()
   const { data, loading, error, reload } = useApiData('/api/principal/stats')
 
   return (
