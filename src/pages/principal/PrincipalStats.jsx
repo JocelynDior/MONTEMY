@@ -1,8 +1,6 @@
 import { useT } from '../../i18n/index.js'
 import React from 'react'
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from 'recharts'
+import { BarChart } from '../../components/charts/charts'
 import StudentPage from '../../components/student/StudentPage'
 import { panel, panelTitle, muted, ErrorBox } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
@@ -10,9 +8,6 @@ import SkeletonList from '../../components/shared/Skeleton'
 
 // Phase 7 edit: title "School Statistics", grey tokens for chart bars,
 // tables in scroll boxes, all strings via t(), no emoji, no hard-coded hex.
-
-const BAR_COLOUR      = 'var(--muted)'      // G1 – no hard-coded hex
-const BAR_COLOUR_ALT  = 'var(--fg)'
 
 export default function PrincipalStats() {
   const t = useT()
@@ -52,17 +47,10 @@ export default function PrincipalStats() {
           {data.gradeDistribution?.length > 0 && (
             <div style={{ ...panel, marginBottom: 'var(--sp-4)' }}>
               <div style={panelTitle}>{t('stats.gradeDistribution', { defaultValue: 'Grade Distribution' })}</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={data.gradeDistribution}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="grade" tick={{ fill: 'var(--fg)', fontSize: 12 }} />
-                  <YAxis tick={{ fill: 'var(--fg)', fontSize: 12 }} />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--fg)' }}
-                  />
-                  <Bar dataKey="count" fill={BAR_COLOUR} />
-                </BarChart>
-              </ResponsiveContainer>
+              <BarChart
+                ariaLabel={t('stats.gradeDistribution', { defaultValue: 'Grade Distribution' })}
+                bars={data.gradeDistribution.map(g => ({ label: g.grade, value: Number(g.count) || 0 }))}
+              />
             </div>
           )}
 
@@ -70,18 +58,10 @@ export default function PrincipalStats() {
           {data.attendanceByClass?.length > 0 && (
             <div style={{ ...panel, marginBottom: 'var(--sp-4)' }}>
               <div style={panelTitle}>{t('stats.attendanceByClass', { defaultValue: 'Attendance by Class' })}</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={data.attendanceByClass}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="className" tick={{ fill: 'var(--fg)', fontSize: 11 }} />
-                  <YAxis unit="%" tick={{ fill: 'var(--fg)', fontSize: 12 }} />
-                  <Tooltip
-                    formatter={v => `${v}%`}
-                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--fg)' }}
-                  />
-                  <Bar dataKey="rate" fill={BAR_COLOUR_ALT} />
-                </BarChart>
-              </ResponsiveContainer>
+              <BarChart
+                ariaLabel={t('stats.attendanceByClass', { defaultValue: 'Attendance by Class' })}
+                bars={data.attendanceByClass.map(c => ({ label: c.className, value: Number(c.rate) || 0 }))}
+              />
             </div>
           )}
 
