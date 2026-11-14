@@ -1,5 +1,5 @@
+import { useT } from '../../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../../api/apiClient'
 import { useApiData } from '../../../hooks/useApiData'
 import { Chip, ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../parent/parentUi'
@@ -17,7 +17,7 @@ function statusColor(s) {
 }
 
 export default function InvoicePanel({ orgId }) {
-  const { t } = useTranslation('admin')
+  const t = useT()
   const { data, loading, error, reload } = useApiData(`/api/billing/admin/${orgId}/invoices`)
   const [form, setForm] = useState({ description: '', amount: '', currency: 'ZAR', frequency: 'once' })
   const [creating, setCreating] = useState(false)
