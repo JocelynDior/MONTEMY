@@ -10,10 +10,10 @@ import SkeletonList from '../../components/shared/Skeleton'
 
 const ROLES = [
   ['student', 'Students'], ['teacher', 'Teachers'], ['parent', 'Parents'], ['principal', 'Principals'],
-  ['tutor', 'Tutors'], ['schoolmember', 'School members'], ['admin', 'Admins'],
+  ['tutor', 'Tutors'], ['staff', 'Staff Members'], ['admin', 'Admins'],
 ]
 // Older links used plural names, e.g. /admin/users?type=students
-const LEGACY_ROLE = { students: 'student', teachers: 'teacher', parents: 'parent', principals: 'principal', tutors: 'tutor', staff: 'schoolmember' }
+const LEGACY_ROLE = { students: 'student', teachers: 'teacher', parents: 'parent', principals: 'principal', tutors: 'tutor', schoolmember: 'staff', staff: 'staff' }
 const roleLabel = (r) => (ROLES.find(([k]) => k === r) || [r, r])[1].replace(/s$/, '')
 const dangerBtn = { ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }
 const selectStyle = { ...glassInput, width: 'auto', minWidth: '150px' }
