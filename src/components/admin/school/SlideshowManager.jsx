@@ -5,7 +5,7 @@ import { useApiData } from '../../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../parent/parentUi'
 import { glassInput } from '../../../styles/glass'
 import SkeletonList from '../../shared/Skeleton'
-import Icon from '../../icons/Icon'
+import Icon from '../../shared/Icon'
 
 const dangerBtn = { ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }
 
