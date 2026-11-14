@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { useApiData } from '../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../components/parent/parentUi'
 import { glassInput } from '../../styles/glass'
@@ -15,7 +15,7 @@ import StudentPage from '../../components/shared/StudentPage'
 const SECTIONS = ['members', 'slideshow', 'message', 'invoice', 'parentLinks']
 
 export default function SchoolManagement() {
-  const { t } = useTranslation('admin')
+  const t = useT()
   const [selectedOrg, setSelectedOrg] = useState(null)
   const [section, setSection] = useState('members')
   const [search, setSearch] = useState('')
