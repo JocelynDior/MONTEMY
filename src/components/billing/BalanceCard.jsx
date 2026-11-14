@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React from 'react'
-import { useTranslation } from 'react-i18next'
 import { panel, panelTitle, muted } from '../parent/parentUi'
 import Icon from '../shared/Icon'
 
@@ -9,7 +9,7 @@ function fmt(cents, currency) {
 }
 
 export default function BalanceCard({ billing }) {
-  const { t } = useTranslation('principal')
+  const t = useT()
 
   if (!billing) {
     return (
