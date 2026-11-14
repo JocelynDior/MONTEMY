@@ -40,6 +40,8 @@ const SchoolMemberDashboard = lazy(() => import('./pages/schoolmember/SchoolMemb
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'))
 const AdminClasses = lazy(() => import('./pages/admin/AdminClasses'))
+const SchoolManagement = lazy(() => import('./pages/admin/SchoolManagement'))
+const AdminHelpInbox = lazy(() => import('./pages/admin/AdminHelpInbox'))
 const Messages = lazy(() => import('./pages/shared/Messages'))
 const AdminOrgs = lazy(() => import('./pages/admin/AdminOrgs'))
 const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'))
@@ -156,6 +158,8 @@ export default function App() {
           <Route path="/admin/chat" element={<Navigate to="/messages" replace />} />
           <Route path="/admin/organisations" element={guard('admin', <AdminOrgs />)} />
           <Route path="/admin/organisations/:id" element={guard('admin', <AdminOrgDetail />)} />
+          <Route path="/admin/school-management" element={guard('admin', <SchoolManagement />)} />
+          <Route path="/admin/help" element={guard('admin', <AdminHelpInbox />)} />
 
           {/* Anything else */}
           <Route path="*" element={<Navigate to="/" replace />} />
