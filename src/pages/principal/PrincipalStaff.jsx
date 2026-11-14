@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import StudentPage from '../../components/student/StudentPage'
 import { panel, panelTitle, muted, Chip, ErrorBox } from '../../components/parent/parentUi'
 import { glassInput, glassBtn } from '../../styles/glass'
@@ -11,7 +11,7 @@ import Icon from '../../components/shared/Icon'
 // staff role shown in counts, no emoji (Icon component used), G6 schoolmember → staff.
 
 export default function PrincipalStaff() {
-  const { t } = useTranslation(['principal', 'common'])
+  const t = useT()
   const [search, setSearch] = useState('')
   const { data, loading, error, reload } = useApiData('/api/principal/staff')
 
