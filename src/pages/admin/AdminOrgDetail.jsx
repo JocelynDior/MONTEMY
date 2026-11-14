@@ -11,9 +11,12 @@ import SkeletonList from '../../components/shared/Skeleton'
 const dangerBtn = { ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }
 const ROLES = [
   ['student', 'Students'], ['teacher', 'Teachers'], ['parent', 'Parents'], ['principal', 'Principals'],
-  ['tutor', 'Tutors'], ['schoolmember', 'School members'],
+  ['tutor', 'Tutors'], ['staff', 'Staff Members'],
 ]
-const roleLabel = (r) => (ROLES.find(([k]) => k === r) || [r, r])[1].replace(/s$/, '')
+const roleLabel = (r) => {
+  if (r === 'schoolmember') return 'Staff Member'
+  return (ROLES.find(([k]) => k === r) || [r, r])[1].replace(/s$/, '')
+}
 
 function Stat({ value, text }) {
   return (
@@ -72,8 +75,9 @@ export default function AdminOrgDetail() {
 
   return (
     <StudentPage title={org ? org.name : 'Organisation'} icon={org?.type === 'tutor' ? '📖' : '🏫'} backPath="/admin/dashboard" maxWidth={1000}>
-      <div style={{ marginBottom: '1.25rem' }}>
+      <div style={{ marginBottom: '1.25rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
         <button onClick={() => navigate('/admin/organisations')} style={ghostBtn}>Back to organisations</button>
+        {org && <button onClick={() => navigate('/admin/school-management')} style={ghostBtn}>Manage {org.type === 'tutor' ? 'Firm' : 'School'}</button>}
       </div>
 
       {error && <ErrorBox message={error} onRetry={reload} />}
