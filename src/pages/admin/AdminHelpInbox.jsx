@@ -5,8 +5,8 @@ import { useApiData } from '../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../components/parent/parentUi'
 import { glassInput } from '../../styles/glass'
 import SkeletonList from '../../components/shared/Skeleton'
-import Icon from '../../components/icons/Icon'
-import StudentPage from '../../components/shared/StudentPage'
+import Icon from '../../components/shared/Icon'
+import StudentPage from '../../components/student/StudentPage'
 
 export default function AdminHelpInbox() {
   const t = useT()
