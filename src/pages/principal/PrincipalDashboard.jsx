@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React from 'react'
-import { useTranslation } from 'react-i18next'
 import DashboardShell from '../../components/layout/DashboardShell'
 
 // Phase 7 edit: supply role to DashboardShell, stat blocks via i18n, remove Timetable,
@@ -15,7 +15,7 @@ const CARDS = [
 ]
 
 export default function PrincipalDashboard() {
-  const { t } = useTranslation('principal')
+  const t = useT()
 
   const cards = CARDS.map(c => ({
     ...c,
