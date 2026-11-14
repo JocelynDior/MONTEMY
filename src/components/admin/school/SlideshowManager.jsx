@@ -1,5 +1,5 @@
+import { useT } from '../../../i18n/index.js'
 import React, { useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../../api/apiClient'
 import { useApiData } from '../../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../parent/parentUi'
@@ -19,7 +19,7 @@ function toBase64(file) {
 }
 
 export default function SlideshowManager({ orgId }) {
-  const { t } = useTranslation('admin')
+  const t = useT()
   const fileRef = useRef(null)
   const { data, loading, error, reload } = useApiData(`/api/slideshow?orgId=${orgId}`)
   const [caption, setCaption] = useState('')
