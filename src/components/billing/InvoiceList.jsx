@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React from 'react'
-import { useTranslation } from 'react-i18next'
 import { panel, panelTitle, muted } from '../parent/parentUi'
 
 const STATUS_COLORS = {
@@ -14,7 +14,7 @@ function fmt(cents, currency) {
 }
 
 export default function InvoiceList({ invoices = [], currency = 'ZAR' }) {
-  const { t } = useTranslation('principal')
+  const t = useT()
 
   return (
     <div style={panel}>
