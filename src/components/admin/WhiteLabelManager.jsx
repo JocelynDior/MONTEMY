@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { supabase } from '../../supabase/client'
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
@@ -12,7 +12,7 @@ const label = { display: 'block', fontSize: '0.8rem', color: 'rgba(255,255,255,0
 
 // Admin branding: app name and logo only. Theme is black and white — no color pickers.
 export default function WhiteLabelManager() {
-  const { t } = useTranslation('admin')
+  const t = useT()
   const orgsReq = useApiData('/api/admin/orgs')
   const fileRef = useRef(null)
   const [orgId, setOrgId] = useState('')
