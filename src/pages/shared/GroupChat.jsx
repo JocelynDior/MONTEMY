@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import StudentPage from '../../components/student/StudentPage'
 import { ErrorBox, muted } from '../../components/parent/parentUi'
@@ -10,7 +10,7 @@ import { useAuth } from '../../context/AuthContext'
 // kind comes from route: /chat/staff  or  /chat/parents
 export default function GroupChat() {
   const { kind } = useParams()          // 'staff' | 'parents'
-  const { t } = useTranslation('principal')
+  const t = useT()
   const { session } = useAuth()
   const [messages, setMessages] = useState([])
   const [chatId, setChatId] = useState(null)
