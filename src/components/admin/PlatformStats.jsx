@@ -2,7 +2,7 @@ import React from 'react'
 import { useApiData } from '../../hooks/useApiData'
 import { glassCard, C } from '../../styles/glass'
 
-const ROLE_NAMES = { student: 'Students', teacher: 'Teachers', parent: 'Parents', principal: 'Principals', tutor: 'Tutors', schoolmember: 'School members', admin: 'Admins' }
+const ROLE_NAMES = { student: 'Students', teacher: 'Teachers', parent: 'Parents', principal: 'Principals', tutor: 'Tutors', staff: 'Staff Members', schoolmember: 'Staff Members', admin: 'Admins' }
 const muted = { color: 'rgba(255,255,255,0.6)', fontSize: '0.88rem' }
 
 // Admin overview extras: role breakdown and signups per day for the last 30 days
@@ -26,14 +26,14 @@ export default function PlatformStats() {
           ['Joined in the last 30 days', signupsTotal],
         ].map(([label, value]) => (
           <div key={label} className="glass" style={{ ...glassCard, padding: '1.25rem', textAlign: 'center' }}>
-            <div style={{ fontSize: '1.8rem', fontWeight: 700, color: C.turquoise }}>{value}</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: 700, color: "var(--color-primary)" }}>{value}</div>
             <div style={muted}>{label}</div>
           </div>
         ))}
       </div>
 
       <div className="glass" style={{ ...glassCard, padding: '1.25rem 1.5rem' }}>
-        <h3 style={{ color: C.turquoise, marginBottom: '1rem', fontSize: '1.05rem' }}>Sign-ups per day</h3>
+        <h3 style={{ color: "var(--color-primary)", marginBottom: '1rem', fontSize: '1.05rem' }}>Sign-ups per day</h3>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '120px' }} role="img" aria-label={`Sign-ups per day for the last 30 days, ${signupsTotal} in total`}>
           {signups.map(s => (
             <div key={s.date} title={`${short(s.date)}: ${s.count}`}
@@ -47,7 +47,7 @@ export default function PlatformStats() {
       </div>
 
       <div className="glass" style={{ ...glassCard, padding: '1.25rem 1.5rem' }}>
-        <h3 style={{ color: C.turquoise, marginBottom: '0.75rem', fontSize: '1.05rem' }}>Users by role</h3>
+        <h3 style={{ color: "var(--color-primary)", marginBottom: '0.75rem', fontSize: '1.05rem' }}>Users by role</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.6rem' }}>
           {Object.entries(ROLE_NAMES).map(([key, name]) => (
             <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
