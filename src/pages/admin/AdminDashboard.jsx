@@ -1,6 +1,6 @@
+import { useT } from '../../i18n/index.js'
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
 import { apiFetch } from '../../api/apiClient'
 import LinkRequests from '../../components/admin/LinkRequests'
@@ -54,7 +54,7 @@ const smallBtn = { ...glassBtn, width: 'auto', padding: '0.5rem 1.1rem', fontSiz
 
 export default function AdminDashboard() {
   const navigate = useNavigate()
-  const { t } = useTranslation('admin')
+  const t = useT()
   const { profile } = useAuth()
   const { appName } = useBranding()
   const [tab, setTab] = useState('')
