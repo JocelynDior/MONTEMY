@@ -1,5 +1,5 @@
+import { useT } from '../../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../../api/apiClient'
 import { useApiData } from '../../../hooks/useApiData'
 import { Chip, ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../parent/parentUi'
@@ -13,7 +13,7 @@ const opt = { color: '#000' }
 const ROLES = ['student', 'teacher', 'parent', 'principal', 'tutor', 'staff', 'admin']
 
 export default function MembersPanel({ orgId, orgType }) {
-  const { t } = useTranslation('admin')
+  const t = useT()
   const [roleFilter, setRoleFilter] = useState('')
   const [search, setSearch] = useState('')
   const [confirm, setConfirm] = useState(null) // { id, action }
