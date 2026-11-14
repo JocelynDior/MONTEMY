@@ -1,5 +1,5 @@
 import React from 'react'
-import DashboardShell from '../../components/shell/DashboardShell'
+import DashboardShell from '../../components/layout/DashboardShell'
 import { useApiData } from '../../hooks/useApiData'
 import { useT } from '../../i18n'
 import { muted, panel, Chip } from '../../components/parent/parentUi'
