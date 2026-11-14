@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { ErrorBox, panelTitle, muted } from '../parent/parentUi'
 import { glassBtn, glassInput } from '../../styles/glass'
 import { panel } from '../parent/parentUi'
@@ -8,7 +8,7 @@ import Icon from '../shared/Icon'
 const CARD_BRANDS = ['Visa', 'Mastercard', 'Amex', 'Discover', 'Other']
 
 export default function AddCardForm({ onSaved, onCancel }) {
-  const { t } = useTranslation('principal')
+  const t = useT()
   const [brand, setBrand] = useState('Visa')
   const [last4, setLast4] = useState('')
   const [expMonth, setExpMonth] = useState('')
