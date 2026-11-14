@@ -1,5 +1,5 @@
+import { useT } from '../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import StudentPage from '../../components/student/StudentPage'
 import { ErrorBox, muted, panel } from '../../components/parent/parentUi'
 import { useApiData } from '../../hooks/useApiData'
@@ -22,7 +22,7 @@ function RiskBadge({ atRisk, t }) {
 }
 
 export default function PrincipalStudentProgress() {
-  const { t } = useTranslation('principal')
+  const t = useT()
   const [search, setSearch] = useState('')
   const [classFilter, setClassFilter] = useState('')
   const [risk, setRisk] = useState('')
