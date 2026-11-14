@@ -3,11 +3,11 @@ import { useApiData } from '../../hooks/useApiData'
 import { apiFetch } from '../../api/apiClient'
 import { glassCard, glassBtn, glassInput, C } from '../../styles/glass'
 
-const labelStyle = { display: 'block', color: C.turquoise, fontSize: '0.85rem', marginBottom: '0.4rem', fontWeight: 600 }
-const opt = { background: '#001F3F' }
+const labelStyle = { display: 'block', color: 'var(--color-primary)', fontSize: '0.85rem', marginBottom: '0.4rem', fontWeight: 600 }
+const opt = { color: '#000' }
 const AUDIENCES = [
   ['', 'Everyone'], ['student', 'Students'], ['teacher', 'Teachers'], ['parent', 'Parents'],
-  ['principal', 'Principals'], ['tutor', 'Tutors'], ['schoolmember', 'School members'],
+  ['principal', 'Principals'], ['tutor', 'Tutors'], ['staff', 'Staff Members'],
 ]
 const MAX = 300
 
@@ -52,7 +52,7 @@ export default function AdminBroadcast() {
 
   return (
     <>
-      <h2 style={{ color: C.turquoise, marginBottom: '1.25rem' }}>Broadcast a notification</h2>
+      <h2 style={{ color: "var(--color-primary)", marginBottom: '1.25rem' }}>Broadcast a notification</h2>
       <form onSubmit={ask} style={{ ...glassCard, padding: '1.25rem', display: 'grid', gap: '1rem' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
           <div>
