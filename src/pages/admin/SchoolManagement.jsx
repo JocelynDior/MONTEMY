@@ -4,13 +4,13 @@ import { useApiData } from '../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../components/parent/parentUi'
 import { glassInput } from '../../styles/glass'
 import SkeletonList from '../../components/shared/Skeleton'
-import Icon from '../../components/icons/Icon'
+import Icon from '../../components/shared/Icon'
 import MembersPanel from '../../components/admin/school/MembersPanel'
 import SlideshowManager from '../../components/admin/school/SlideshowManager'
 import MessageMembers from '../../components/admin/school/MessageMembers'
 import InvoicePanel from '../../components/admin/school/InvoicePanel'
 import LinkRequests from '../../components/admin/LinkRequests'
-import StudentPage from '../../components/shared/StudentPage'
+import StudentPage from '../../components/student/StudentPage'
 
 const SECTIONS = ['members', 'slideshow', 'message', 'invoice', 'parentLinks']
 
