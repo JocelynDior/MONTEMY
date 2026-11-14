@@ -1,5 +1,5 @@
+import { useT } from '../../../i18n/index.js'
 import React, { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../../api/apiClient'
 import { ErrorBox, ghostBtn, muted, panel, smallBtn } from '../../parent/parentUi'
 import { glassInput } from '../../../styles/glass'
@@ -9,7 +9,7 @@ const TYPES = ['info', 'success', 'warning']
 const opt = { color: '#000' }
 
 export default function MessageMembers({ orgId }) {
-  const { t } = useTranslation('admin')
+  const t = useT()
   const [role, setRole] = useState('')
   const [msgType, setMsgType] = useState('info')
   const [body, setBody] = useState('')
