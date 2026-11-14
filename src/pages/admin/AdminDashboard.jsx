@@ -14,7 +14,7 @@ import { useBranding } from '../../context/BrandingContext'
 import Background from '../../components/shared/Background'
 import ErrorBoundary from '../../components/shared/ErrorBoundary'
 import SkeletonList from '../../components/shared/Skeleton'
-import Icon from '../../components/icons/Icon'
+import Icon from '../../components/shared/Icon'
 import { glassCard, glassNav, glassBtn, addRipple } from '../../styles/glass'
 
 const CIRCLES = [
