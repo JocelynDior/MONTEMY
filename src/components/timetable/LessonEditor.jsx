@@ -1,14 +1,17 @@
 import React, { useState } from 'react'
+import { useT } from '../../i18n/index.js'
 import { apiFetch } from '../../api/apiClient'
 import { glassInput } from '../../styles/glass'
 import { ghostBtn, panel, panelTitle, smallBtn } from '../parent/parentUi'
-import { DAY_NAMES } from './ttUtils'
+import { DAY_KEYS } from './ttUtils'
 
-const label = { display: 'block', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', marginBottom: '0.3rem' }
+const label = { display: 'block', fontSize: '0.8rem', color: 'var(--fg-muted, rgba(128,128,128,0.9))', marginBottom: '0.3rem' }
 const opt = { color: '#000' }
 
 // Add or edit one lesson. `initial` has classId, day, period and (when editing) id, subject, teacherId, room.
 export default function LessonEditor({ meta, initial, subjectHints, onClose, onSaved }) {
+  const t = useT()
+  const DAY_NAMES = DAY_KEYS.map(k => t(`shared.timetable.day_${k}`))
   const editing = !!initial.id
   const isPrincipal = meta.role === 'principal'
   const classOptions = isPrincipal ? meta.classes : meta.classes.filter(c => c.mine)
@@ -24,6 +27,7 @@ export default function LessonEditor({ meta, initial, subjectHints, onClose, onS
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
 
   const body = () => ({
@@ -49,7 +53,6 @@ export default function LessonEditor({ meta, initial, subjectHints, onClose, onS
   }
 
   const remove = async () => {
-    if (!window.confirm('Remove this lesson from the timetable?')) return
     setSaving(true)
     setError('')
     try {
@@ -63,64 +66,72 @@ export default function LessonEditor({ meta, initial, subjectHints, onClose, onS
 
   return (
     <div className="no-print" style={{ ...panel, marginBottom: '1.25rem' }}>
-      <h3 style={panelTitle}>{editing ? 'Edit lesson' : 'Add a lesson'}</h3>
+      <h3 style={panelTitle}>{editing ? t('shared.timetable.editLesson') : t('shared.timetable.addLesson')}</h3>
       {classOptions.length === 0 ? (
-        <p style={{ color: 'rgba(255,255,255,0.7)' }}>
-          {isPrincipal ? 'There are no classes in your school yet.' : 'Add the classes you teach under My Classes first, then you can build their timetable.'}
+        <p style={label}>
+          {isPrincipal ? t('shared.timetable.noClassesYet') : t('shared.timetable.addYourClassesFirst')}
         </p>
       ) : (
         <div style={{ display: 'grid', gap: '0.9rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.9rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(10rem, 1fr))', gap: '0.9rem' }}>
             <div>
-              <label style={label} htmlFor="ls-class">Class</label>
+              <label style={label} htmlFor="ls-class">{t('shared.timetable.classLabel')}</label>
               <select id="ls-class" value={form.classId} onChange={set('classId')} disabled={editing} style={{ ...glassInput, opacity: editing ? 0.6 : 1 }}>
                 {classOptions.map(c => <option key={c.id} value={c.id} style={opt}>{c.name}</option>)}
               </select>
             </div>
             <div>
-              <label style={label} htmlFor="ls-day">Day</label>
+              <label style={label} htmlFor="ls-day">{t('shared.timetable.dayLabel')}</label>
               <select id="ls-day" value={form.day} onChange={set('day')} style={glassInput}>
                 {DAY_NAMES.slice(0, meta.maxDay).map((d, i) => <option key={d} value={i + 1} style={opt}>{d}</option>)}
               </select>
             </div>
             <div>
-              <label style={label} htmlFor="ls-period">Period</label>
+              <label style={label} htmlFor="ls-period">{t('shared.timetable.periodLabel')}</label>
               <select id="ls-period" value={form.period} onChange={set('period')} style={glassInput}>
                 {lessonPeriods.map(p => <option key={p.period} value={p.period} style={opt}>{p.label} ({p.start}–{p.end})</option>)}
               </select>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.9rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(12rem, 1fr))', gap: '0.9rem' }}>
             <div>
-              <label style={label} htmlFor="ls-subject">Subject</label>
-              <input id="ls-subject" list="ls-subjects" value={form.subject} onChange={set('subject')} maxLength={60} style={glassInput} placeholder="e.g. Mathematics" />
+              <label style={label} htmlFor="ls-subject">{t('shared.timetable.subjectLabel')}</label>
+              <input id="ls-subject" list="ls-subjects" value={form.subject} onChange={set('subject')} maxLength={60} style={glassInput} placeholder={t('shared.timetable.subjectPlaceholder')} />
               <datalist id="ls-subjects">{subjectHints.map(s => <option key={s} value={s} />)}</datalist>
             </div>
             <div>
-              <label style={label} htmlFor="ls-room">Room (optional)</label>
-              <input id="ls-room" value={form.room} onChange={set('room')} maxLength={40} style={glassInput} placeholder="e.g. B12" />
+              <label style={label} htmlFor="ls-room">{t('shared.timetable.roomLabel')}</label>
+              <input id="ls-room" value={form.room} onChange={set('room')} maxLength={40} style={glassInput} placeholder={t('shared.timetable.roomPlaceholder')} />
             </div>
             {isPrincipal && (
               <div>
-                <label style={label} htmlFor="ls-teacher">Teacher</label>
+                <label style={label} htmlFor="ls-teacher">{t('shared.roles.teacher')}</label>
                 <select id="ls-teacher" value={form.teacherId} onChange={set('teacherId')} style={glassInput}>
-                  <option value="" style={opt}>Not assigned</option>
-                  {meta.teachers.map(t => <option key={t.id} value={t.id} style={opt}>{t.name}</option>)}
+                  <option value="" style={opt}>{t('shared.timetable.notAssigned')}</option>
+                  {meta.teachers.map(tc => <option key={tc.id} value={tc.id} style={opt}>{tc.name}</option>)}
                 </select>
               </div>
             )}
           </div>
-          {!isPrincipal && <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.55)' }}>This lesson will be listed under your name.</p>}
+          {!isPrincipal && <p style={label}>{t('shared.timetable.listedUnderYourName')}</p>}
         </div>
       )}
 
       {error && <p role="alert" style={{ color: '#ffb3b3', fontSize: '0.9rem', marginTop: '0.75rem' }}>{error}</p>}
 
-      <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-        {classOptions.length > 0 && <button disabled={saving} onClick={save} style={smallBtn}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Add lesson'}</button>}
-        <button disabled={saving} onClick={onClose} style={ghostBtn}>Cancel</button>
-        {editing && <button disabled={saving} onClick={remove} style={{ ...ghostBtn, color: '#ff8f8f', borderColor: 'rgba(255,143,143,0.5)', marginLeft: 'auto' }}>Remove lesson</button>}
+      <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        {classOptions.length > 0 && <button disabled={saving} onClick={save} style={smallBtn}>{saving ? t('shared.saving') : editing ? t('shared.saveChanges') : t('shared.timetable.addLesson')}</button>}
+        <button disabled={saving} onClick={onClose} style={ghostBtn}>{t('shared.cancel')}</button>
+        {editing && (confirmRemove ? (
+          <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginLeft: 'auto' }}>
+            <span style={{ fontSize: '0.85rem', color: '#ffaaaa' }}>{t('shared.timetable.confirmRemove')}</span>
+            <button disabled={saving} onClick={remove} style={{ ...smallBtn, background: 'rgba(255,80,80,0.85)', color: 'white', boxShadow: 'none' }}>{saving ? '…' : t('shared.events.yesDelete')}</button>
+            <button disabled={saving} onClick={() => setConfirmRemove(false)} style={ghostBtn}>{t('shared.cancel')}</button>
+          </span>
+        ) : (
+          <button disabled={saving} onClick={() => setConfirmRemove(true)} style={{ ...ghostBtn, color: '#ff8f8f', borderColor: 'rgba(255,143,143,0.5)', marginLeft: 'auto' }}>{t('shared.timetable.removeLesson')}</button>
+        ))}
       </div>
     </div>
   )
