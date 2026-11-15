@@ -1,14 +1,17 @@
 import React, { useState } from 'react'
+import { useT } from '../../i18n/index.js'
 import { apiFetch } from '../../api/apiClient'
 import { useApiData } from '../../hooks/useApiData'
 import { ErrorBox, ghostBtn, muted, smallBtn } from '../parent/parentUi'
-import { glassInput, C } from '../../styles/glass'
+import { glassInput } from '../../styles/glass'
+import Icon from '../shared/Icon'
 import SkeletonList from '../../components/shared/Skeleton'
 
 const MAX = 1500
 
 // Teacher: one message to every parent of a class. Each parent receives it as a normal chat message.
 export default function ClassAnnouncement({ onClose, onSent }) {
+  const t = useT()
   const { data, loading, error, reload } = useApiData('/api/teacher/classes')
   const [classId, setClassId] = useState('')
   const [content, setContent] = useState('')
@@ -23,8 +26,8 @@ export default function ClassAnnouncement({ onClose, onSent }) {
   const ask = (e) => {
     e.preventDefault()
     setFormError(''); setResult('')
-    if (!classId) return setFormError('Choose a class.')
-    if (!content.trim()) return setFormError('Type a message first.')
+    if (!classId) return setFormError(t('shared.messages.chooseClass'))
+    if (!content.trim()) return setFormError(t('shared.messages.typeMessageFirst'))
     setConfirming(true)
   }
 
@@ -32,7 +35,7 @@ export default function ClassAnnouncement({ onClose, onSent }) {
     setSending(true); setFormError('')
     try {
       const r = await apiFetch(`/api/teacher/classes/${classId}/message-parents`, { method: 'POST', body: { content } })
-      setResult(`Sent to ${r.sent} ${r.sent === 1 ? 'parent' : 'parents'} of ${r.className}. Their replies will appear in your chats.`)
+      setResult(t('shared.messages.announcementSent', { count: r.sent, className: r.className }))
       setContent(''); setConfirming(false)
       onSent?.()
     } catch (err) {
@@ -43,23 +46,25 @@ export default function ClassAnnouncement({ onClose, onSent }) {
 
   return (
     <div style={{ padding: '1rem', overflowY: 'auto', flex: 1 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.9rem' }}>
-        <strong style={{ color: C.turquoise }}>📢 Message all parents of a class</strong>
-        <button onClick={onClose} style={ghostBtn}>Close</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.9rem', gap: '0.6rem' }}>
+        <strong style={{ color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Icon name="messages" size={18} />{t('shared.messages.announceToClass')}
+        </strong>
+        <button onClick={onClose} style={ghostBtn}>{t('shared.close')}</button>
       </div>
 
       {error && <ErrorBox message={error} onRetry={reload} />}
       {loading && !data && <SkeletonList />}
-      {data && classes.length === 0 && <p style={muted}>You haven't added any classes yet. Add one under My Classes first.</p>}
+      {data && classes.length === 0 && <p style={muted}>{t('shared.messages.noClassesYet')}</p>}
 
       {data && classes.length > 0 && (
         <form onSubmit={ask} style={{ display: 'grid', gap: '0.8rem' }}>
-          <select value={classId} onChange={(e) => { setClassId(e.target.value); setConfirming(false); setResult('') }} style={glassInput} aria-label="Class">
-            <option value="" style={{ color: '#000' }}>Choose a class</option>
+          <select value={classId} onChange={(e) => { setClassId(e.target.value); setConfirming(false); setResult('') }} style={glassInput} aria-label={t('shared.timetable.classLabel')}>
+            <option value="" style={{ color: '#000' }}>{t('shared.messages.chooseClassOption')}</option>
             {classes.map(c => <option key={c.id} value={c.id} style={{ color: '#000' }}>{c.name}</option>)}
           </select>
           <textarea value={content} onChange={(e) => { setContent(e.target.value); setConfirming(false) }} rows={5} maxLength={MAX}
-            placeholder="e.g. Reminder: the maths test is on Friday." aria-label="Message to parents"
+            placeholder={t('shared.messages.announcementPlaceholder')} aria-label={t('shared.messages.messageToParents')}
             style={{ ...glassInput, resize: 'vertical', fontFamily: 'inherit' }} />
           <div style={{ ...muted, fontSize: '0.8rem', textAlign: 'right' }}>{content.length}/{MAX}</div>
 
@@ -68,12 +73,12 @@ export default function ClassAnnouncement({ onClose, onSent }) {
 
           {confirming ? (
             <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '0.9rem' }}>Send this to every parent of {cls?.name}?</span>
-              <button type="button" disabled={sending} onClick={send} style={smallBtn}>{sending ? 'Sending...' : 'Yes, send'}</button>
-              <button type="button" disabled={sending} onClick={() => setConfirming(false)} style={ghostBtn}>Edit</button>
+              <span style={{ fontSize: '0.9rem' }}>{t('shared.messages.confirmSendToClass', { className: cls?.name || '' })}</span>
+              <button type="button" disabled={sending} onClick={send} style={smallBtn}>{sending ? t('shared.messages.sending') : t('shared.messages.yesSend')}</button>
+              <button type="button" disabled={sending} onClick={() => setConfirming(false)} style={ghostBtn}>{t('shared.messages.editMessage')}</button>
             </div>
           ) : (
-            <div><button type="submit" style={smallBtn}>Send to parents</button></div>
+            <div><button type="submit" style={smallBtn}>{t('shared.messages.sendToParents')}</button></div>
           )}
         </form>
       )}
