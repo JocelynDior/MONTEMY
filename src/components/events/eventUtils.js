@@ -28,20 +28,28 @@ export const fmtTime = (iso) => new Date(iso).toLocaleTimeString(undefined, { ho
 export const fmtLongDate = (iso) =>
   new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
 
-export const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+export const DAY_SHORT_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
-export const TYPE_COLORS = {
-  General: '#8fd3ff', Academic: '#7be3b1', Sports: '#ffb36b', Meeting: '#c7a8ff', Holiday: '#ff9bb5', Other: '#d0d6dc',
+// Token-coloured event type styles, told apart by weight and a short translated label (never colour alone).
+export const EVENT_TYPE_KEYS = ['general', 'academic', 'sports', 'meeting', 'holiday', 'other']
+export function typeStyle(type) {
+  const key = String(type || 'general').toLowerCase()
+  const emphasised = key === 'holiday' || key === 'meeting'
+  return {
+    background: emphasised ? 'var(--fg)' : 'rgba(128,128,128,0.25)',
+    color: emphasised ? 'var(--color-bg)' : 'var(--fg)',
+    border: '1px solid var(--border, rgba(128,128,128,0.4))',
+  }
 }
 
 // Where each role's timetable lives (for the "Timetable" shortcut)
 export const TIMETABLE_PATH = {
   student: '/student/schedule', teacher: '/teacher/schedule',
-  principal: '/principal/timetable', schoolmember: '/schoolmember/schedules',
+  principal: '/principal/timetable', staff: '/staff/schedules',
 }
 export const ROLE_HOME = {
   student: '/student/dashboard', teacher: '/teacher/dashboard', parent: '/parent/dashboard',
-  principal: '/principal/dashboard', tutor: '/tutor/dashboard', schoolmember: '/schoolmember/dashboard',
+  principal: '/principal/dashboard', tutor: '/tutor/dashboard', staff: '/staff/dashboard',
   admin: '/admin/dashboard',
 }
 
