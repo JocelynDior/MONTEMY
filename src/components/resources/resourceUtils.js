@@ -37,27 +37,28 @@ export function kindOf(mime) {
   return 'other'
 }
 
+// Returns an Icon-component name string (see src/components/shared/Icon.jsx), never an emoji (G5).
 export function iconFor(mime) {
   const kind = kindOf(mime)
-  if (kind === 'pdf') return '📕'
-  if (kind === 'image') return '🖼️'
-  if (typeof mime === 'string' && mime.includes('presentation') || mime === 'application/vnd.ms-powerpoint') return '📊'
-  return '📄'
+  if (kind === 'image') return 'image'
+  return 'file'
 }
 
-// Three steps: ask the API for an upload token, send the file straight to Storage, then save the details
-export async function uploadResource({ file, title, subject, grade, isPastPaper, orgId }) {
+// Three steps: ask the API for an upload token, send the file straight to Storage, then save the details.
+// `t` is the caller's useT() translator; a fallback English string is used only if it's missing.
+export async function uploadResource({ file, title, subject, grade, isPastPaper, orgId, t }) {
+  const tr = (key, fallback) => (t ? t(key) : fallback)
   const mimeType = mimeFor(file)
-  if (!mimeType) throw new Error('That file type is not allowed. Use a PDF, Word, PowerPoint or image file.')
-  if (file.size > MAX_BYTES) throw new Error('That file is too big. The limit is 10MB.')
-  if (file.size === 0) throw new Error('That file is empty.')
+  if (!mimeType) throw new Error(tr('shared.resources.errBadType', 'That file type is not allowed. Use a PDF, Word, PowerPoint or image file.'))
+  if (file.size > MAX_BYTES) throw new Error(tr('shared.resources.errTooBig', 'That file is too big. The limit is 10MB.'))
+  if (file.size === 0) throw new Error(tr('shared.resources.errEmpty', 'That file is empty.'))
 
   const { path, token } = await apiFetch('/api/resources/upload-url', {
     method: 'POST', body: { mimeType, size: file.size, orgId },
   })
 
   const { error } = await supabase.storage.from('resources').uploadToSignedUrl(path, token, file, { contentType: mimeType })
-  if (error) throw new Error('The file could not be uploaded. Check your connection and try again.')
+  if (error) throw new Error(tr('shared.resources.errUpload', 'The file could not be uploaded. Check your connection and try again.'))
 
   await apiFetch('/api/resources', {
     method: 'POST',
