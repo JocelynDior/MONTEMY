@@ -1,7 +1,7 @@
 // Small date helpers for the timetable. Weeks run Monday to Sunday and dates are plain 'YYYY-MM-DD'
 // strings in the viewer's own time zone, so they line up with what the server returns for term dates.
-export const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-export const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+// Day and period names are translated at the call site via t('shared.timetable.day_<key>') etc.
+export const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
 const pad = (n) => String(n).padStart(2, '0')
 
@@ -47,9 +47,17 @@ export function fmtTerm(t) {
 export const holidayOn = (iso, terms) => (terms || []).find(t => t.kind === 'holiday' && t.startDate <= iso && iso <= t.endDate) || null
 export const eventsOn = (iso, events) => (events || []).filter(e => toIso(new Date(e.date)) === iso)
 
-// A steady colour per subject so the same subject looks the same everywhere
-export function subjectColor(subject) {
+// Grey-scale, token-based lesson styling. Subjects are told apart by weight and a short label,
+// never by colour alone, so the board reads the same for everyone.
+const SHADES = [
+  'rgba(128,128,128,0.10)', 'rgba(128,128,128,0.18)', 'rgba(128,128,128,0.26)', 'rgba(128,128,128,0.34)',
+]
+export function subjectStyle(subject) {
   let h = 0
-  for (const ch of String(subject || '')) h = (h * 31 + ch.charCodeAt(0)) % 360
-  return h
+  for (const ch of String(subject || '')) h = (h * 31 + ch.charCodeAt(0)) % SHADES.length
+  return {
+    background: SHADES[h],
+    border: '1px solid rgba(128,128,128,0.35)',
+    color: 'var(--fg)',
+  }
 }
