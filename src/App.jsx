@@ -47,6 +47,7 @@ const AdminOrgs = lazy(() => import('./pages/admin/AdminOrgs'))
 const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'))
 const SchedulePage = lazy(() => import('./pages/timetable/SchedulePage'))
 const Events = lazy(() => import('./pages/shared/Events'))
+const CalendarPage = lazy(() => import('./pages/shared/CalendarPage'))
 const Settings = lazy(() => import('./pages/Settings'))
 const HelpChat = lazy(() => import('./pages/help/HelpChat'))
 const PrivacyPolicy = lazy(() => import('./pages/legal/PrivacyPolicy'))
@@ -101,6 +102,8 @@ export default function App() {
 
           {/* Events: one shared page for every role */}
           <Route path="/events" element={<ProtectedRoute><Events /></ProtectedRoute>} />
+          {/* Calendar: one shared page for every role */}
+          <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
 
           {/* Settings & profile: every role */}
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
