@@ -16,6 +16,7 @@ const StudentDashboard = lazy(() => import('./pages/student/StudentDashboard'))
 const StudentAcademics = lazy(() => import('./pages/student/StudentAcademics'))
 const StudentAssignment = lazy(() => import('./pages/student/StudentAssignment'))
 const StudentResources = lazy(() => import('./pages/student/StudentResources'))
+const StudentExams = lazy(() => import('./pages/student/StudentExams'))
 const TeacherResources = lazy(() => import('./pages/teacher/TeacherResources'))
 const StudentAiTutor = lazy(() => import('./pages/student/StudentAiTutor'))
 
@@ -25,17 +26,25 @@ const TeacherAssignments = lazy(() => import('./pages/teacher/TeacherAssignments
 const TeacherProgress = lazy(() => import('./pages/teacher/TeacherProgress'))
 
 const ParentDashboard = lazy(() => import('./pages/parent/ParentDashboard'))
-const ParentMyChild = lazy(() => import('./pages/parent/ParentMyChild'))
+const ParentProgress = lazy(() => import('./pages/parent/ParentProgress'))
+const ParentHomework = lazy(() => import('./pages/parent/ParentHomework'))
+const ParentTimetable = lazy(() => import('./pages/parent/ParentTimetable'))
+const ParentExams = lazy(() => import('./pages/parent/ParentExams'))
 
 const PrincipalDashboard = lazy(() => import('./pages/principal/PrincipalDashboard'))
-const PrincipalEvents = lazy(() => import('./pages/principal/PrincipalEvents'))
 const PrincipalStats = lazy(() => import('./pages/principal/PrincipalStats'))
 const PrincipalStaff = lazy(() => import('./pages/principal/PrincipalStaff'))
+const PrincipalBilling = lazy(() => import('./pages/principal/PrincipalBilling'))
+const PrincipalStudentProgress = lazy(() => import('./pages/principal/PrincipalStudentProgress'))
 
 const TutorDashboard = lazy(() => import('./pages/tutor/TutorDashboard'))
 const TutorStudents = lazy(() => import('./pages/tutor/TutorStudents'))
 const TutorSessions = lazy(() => import('./pages/tutor/TutorSessions'))
-const SchoolMemberDashboard = lazy(() => import('./pages/schoolmember/SchoolMemberDashboard'))
+const TutorPlans = lazy(() => import('./pages/tutor/TutorPlans'))
+const TutorReports = lazy(() => import('./pages/tutor/TutorReports'))
+const TutorResources = lazy(() => import('./pages/tutor/TutorResources'))
+
+const StaffDashboard = lazy(() => import('./pages/staff/StaffDashboard'))
 
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'))
@@ -47,6 +56,7 @@ const AdminOrgs = lazy(() => import('./pages/admin/AdminOrgs'))
 const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'))
 const SchedulePage = lazy(() => import('./pages/timetable/SchedulePage'))
 const Events = lazy(() => import('./pages/shared/Events'))
+const GroupChat = lazy(() => import('./pages/shared/GroupChat'))
 const CalendarPage = lazy(() => import('./pages/shared/CalendarPage'))
 const Settings = lazy(() => import('./pages/Settings'))
 const HelpChat = lazy(() => import('./pages/help/HelpChat'))
@@ -102,6 +112,8 @@ export default function App() {
 
           {/* Events: one shared page for every role */}
           <Route path="/events" element={<ProtectedRoute><Events /></ProtectedRoute>} />
+          {/* Staff and Parents group chats: teachers, principals and staff members */}
+          <Route path="/chat/:kind" element={guard(['teacher', 'principal', 'staff'], <GroupChat />)} />
           {/* Calendar: one shared page for every role */}
           <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
 
@@ -123,6 +135,7 @@ export default function App() {
           <Route path="/student/assignments/:id" element={guard('student', <StudentAssignment />)} />
           <Route path="/student/schedule" element={guard('student', <SchedulePage backPath="/student/dashboard" />)} />
           <Route path="/student/resources" element={guard('student', <StudentResources />)} />
+          <Route path="/student/exams" element={guard('student', <StudentExams />)} />
           <Route path="/student/ai-tutor" element={guard('student', <StudentAiTutor />)} />
 
           {/* Teacher */}
@@ -135,23 +148,31 @@ export default function App() {
 
           {/* Parent */}
           <Route path="/parent/dashboard" element={guard('parent', <ParentDashboard />)} />
-          <Route path="/parent/mychild" element={guard('parent', <ParentMyChild />)} />
+          <Route path="/parent/progress" element={guard('parent', <ParentProgress />)} />
+          <Route path="/parent/homework" element={guard('parent', <ParentHomework />)} />
+          <Route path="/parent/timetable" element={guard('parent', <ParentTimetable />)} />
+          <Route path="/parent/exams" element={guard('parent', <ParentExams />)} />
 
           {/* Principal */}
           <Route path="/principal/dashboard" element={guard('principal', <PrincipalDashboard />)} />
-          <Route path="/principal/events" element={guard('principal', <PrincipalEvents />)} />
           <Route path="/principal/stats" element={guard('principal', <PrincipalStats />)} />
           <Route path="/principal/timetable" element={guard('principal', <SchedulePage backPath="/principal/dashboard" />)} />
           <Route path="/principal/staff" element={guard('principal', <PrincipalStaff />)} />
+          <Route path="/principal/billing" element={guard('principal', <PrincipalBilling />)} />
+          <Route path="/principal/student-progress" element={guard('principal', <PrincipalStudentProgress />)} />
 
           {/* Tutor */}
           <Route path="/tutor/dashboard" element={guard('tutor', <TutorDashboard />)} />
           <Route path="/tutor/students" element={guard('tutor', <TutorStudents />)} />
           <Route path="/tutor/sessions" element={guard('tutor', <TutorSessions />)} />
+          <Route path="/tutor/plans" element={guard('tutor', <TutorPlans />)} />
+          <Route path="/tutor/reports" element={guard('tutor', <TutorReports />)} />
+          <Route path="/tutor/resources" element={guard('tutor', <TutorResources />)} />
 
-          {/* Staff Member (was School Member). Phase 7 replaces the dashboard page; Phase 10 finishes the wiring. */}
-          <Route path="/staff/dashboard" element={guard('staff', <SchoolMemberDashboard />)} />
+          {/* Staff Member (was School Member). Old /schoolmember links for people who saved them go to /staff. */}
+          <Route path="/staff/dashboard" element={guard('staff', <StaffDashboard />)} />
           <Route path="/staff/schedules" element={guard('staff', <SchedulePage backPath="/staff/dashboard" />)} />
+          <Route path="/schoolmember/schedules" element={<Navigate to="/staff/schedules" replace />} />
           <Route path="/schoolmember/*" element={<Navigate to="/staff/dashboard" replace />} />
 
           {/* Admin */}
@@ -163,6 +184,7 @@ export default function App() {
           <Route path="/admin/organisations/:id" element={guard('admin', <AdminOrgDetail />)} />
           <Route path="/admin/school-management" element={guard('admin', <SchoolManagement />)} />
           <Route path="/admin/help" element={guard('admin', <AdminHelpInbox />)} />
+          <Route path="/admin/help-inbox" element={guard('admin', <AdminHelpInbox />)} />
 
           {/* Anything else */}
           <Route path="*" element={<Navigate to="/" replace />} />
